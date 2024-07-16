@@ -1,0 +1,128 @@
+1. Input Data and Templates:
+   - Read datasets from country offices (CSV, Excel).
+   - Read KoboToolbox template (Excel).
+   - Optional: Read supporting documents.
+
+2. Parsing and Initial Mapping:
+   - Parse datasets using Python (pandas).
+   - Extract variable names and codes.
+   - Compare variables with KoboToolbox template.
+   - Flag discrepancies.
+
+3. Generate Initial Reports:
+   - Generate individual reports per country using Python (pandas).
+   - Combine individual reports into a master report.
+
+4. Mapping with Indicators Bank:
+   - Load indicators bank using Python (pandas).
+   - Map dataset codes, template codes, and guidelines.
+   - Flag matches as 'Yes' and non-matches as 'To Check'.
+
+5. Tagging and Standardization:
+   - Tag matched items as 'Yes' using Python (pandas).
+   - Generate a master mapping file with logs (Python: pandas, logging).
+   - Validate value codes and constraints (Python: pandas, NumPy).
+   - Standardize data and codes (Python: pandas, NumPy).
+
+6. Central Database Creation:
+   - Combine standardized data into a central database using Python (pandas, PyArrow).
+   - Save the central database as a Parquet file (Python: PyArrow).
+
+7. Analysis in R:
+   - Load the Parquet file into R (R: R 3.1 to R 3.8).
+   - Run analysis steps from R 3.1 to R 3.8.
+
+8. Custom Rules Integration:
+   - Load YAML config file specifying custom rules in R syntax.
+   - Apply custom rules during data processing using Python (pandas) and R.
+
+```python
+import pandas as pd
+import pyarrow.parquet as pq
+from rpy2.robjects import r
+import yaml
+
+def ingest_data(file_paths):
+    dataframes = [pd.read_csv(file) for file in file_paths]
+    return dataframes
+
+def ingest_template(template_path):
+    return pd.read_excel(template_path)
+
+def parse_and_map(dataframes, template):
+    reports = []
+    for df in dataframes:
+        report = {}
+        mapped_columns = {}
+        for column in df.columns:
+            if column in template.columns:
+                mapped_columns[column] = column
+            else:
+                report[column] = "Discrepancy"
+        reports.append(report)
+        df = df.rename(columns=mapped_columns)
+    return dataframes, reports
+
+def generate_report(reports):
+    master_report = pd.DataFrame(reports)
+    master_report.to_csv("master_report.csv")
+
+def map_with_indicators(dataframes, indicators_bank):
+    for df in dataframes:
+        for column in df.columns:
+            if column in indicators_bank:
+                df['flag'] = 'Yes'
+            else:
+                df['flag'] = 'To Check'
+    return dataframes
+
+def apply_custom_rules(dataframes, yaml_config):
+    with open(yaml_config, 'r') as stream:
+        config = yaml.safe_load(stream)
+    
+    for rule in config.get('rules', []):
+        variable = rule.get('variable')
+        condition = rule.get('condition')
+        action = rule.get('action')
+        
+        if variable and condition and action:
+            for df in dataframes:
+                if variable in df.columns:
+                    try:
+                        r.assign('df', df)
+                        r(condition)
+                        r(action)
+                        df = r('df')
+                    except Exception as e:
+                        print(f"Error applying rule for variable {variable}: {e}")
+    return dataframes
+
+def standardize_data(dataframes, master_mapping):
+    standardized_dfs = []
+    for df in dataframes:
+        standardized_df = df.rename(columns=master_mapping)
+        standardized_dfs.append(standardized_df)
+    return standardized_dfs
+
+def combine_and_save(dataframes, output_path):
+    combined_df = pd.concat(dataframes)
+    combined_df.to_parquet(output_path)
+
+def load_and_analyze(parquet_file, analysis_script):
+    r.source(analysis_script)
+
+# Main pipeline execution
+file_paths = ["country1.csv", "country2.csv"]
+template_path = "kobocollect_template.xlsx"
+indicators_bank = {"indicator1": "description1", "indicator2": "description2"}
+yaml_config = "custom_rules.yaml"
+output_path = "central_database.parquet"
+analysis_script = "analysis.R"
+
+dataframes = ingest_data(file_paths)
+template = ingest_template(template_path)
+dataframes, reports = parse_and_map(dataframes, template)
+generate_report(reports)
+dataframes = map_with_indicators(dataframes, indicators_bank)
+dataframes = apply_custom_
+```
