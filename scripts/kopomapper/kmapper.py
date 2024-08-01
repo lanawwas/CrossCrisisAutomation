@@ -6,6 +6,8 @@ import os
 import argparse
 import logging
 from fuzzywuzzy import fuzz
+from fuzzywuzzy import process
+import re
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -16,6 +18,8 @@ SURVEY_COLUMNS_TO_COMPARE = ['name', 'type', 'calculation', 'relevant', 'constra
 CHOICES_COLUMNS_TO_COMPARE = ['name', 'list_name']
 # Define the special types
 SPECIAL_TYPES = ['begin_group', 'end_group', 'begin_repeat', 'end_repeat']
+# Define the label columns for fuzzy matching
+LABEL_COLUMNS = ['label::English', 'label::French']
 
 def load_kobo_files(directory: str, verbose: bool):
     survey_data = {}
@@ -60,12 +64,25 @@ def load_standard_template(file_path: str, verbose: bool):
         return None
 
 def extract_variables(df, columns_to_compare):
-    return df[columns_to_compare]
+    """Extract only the columns that exist in the DataFrame."""
+    return df[[col for col in columns_to_compare if col in df.columns]]
+
+def get_available_label_columns(df):
+    """Get the label columns that are available in the DataFrame."""
+    return [col for col in LABEL_COLUMNS if col in df.columns]
 
 def is_empty_or_nan(value):
     if isinstance(value, float):
         return np.isnan(value)
     return value is None or str(value).strip() == ''
+
+def preprocess_text(text):
+    """Preprocess text for better matching."""
+    if pd.isna(text):
+        return ""
+    text = str(text).lower()
+    text = re.sub(r'[^\w\s]', '', text)  # Remove punctuation
+    return text.strip()
 
 def find_approximate_match(value, candidates, threshold):
     best_match = None
@@ -107,17 +124,51 @@ def find_best_match(value, candidates):
     
     return best_match, highest_score
 
+def find_label_match(std_value, country_labels, threshold):
+    """Find the best label match using multiple techniques."""
+    std_value = preprocess_text(std_value)
+    country_labels = [preprocess_text(label) for label in country_labels]
+    
+    # Exact match
+    if std_value in country_labels:
+        return std_value, 100
+    
+    # Fuzzy ratio
+    best_match, score = process.extractOne(std_value, country_labels, scorer=fuzz.ratio)
+    if score >= threshold:
+        return best_match, score
+    
+    # Token sort ratio (handles word order differences)
+    best_match, score = process.extractOne(std_value, country_labels, scorer=fuzz.token_sort_ratio)
+    if score >= threshold:
+        return best_match, score
+    
+    # Partial ratio (handles substring matches)
+    best_match, score = process.extractOne(std_value, country_labels, scorer=fuzz.partial_ratio)
+    if score >= threshold:
+        return best_match, score
+    
+    # If no match found above threshold, return the best match found
+    return best_match, score
+
 def compare_with_standard(country_data, standard_data, verbose: bool, threshold: int):
     discrepancies = {}
-    standard_survey = extract_variables(standard_data['survey'], SURVEY_COLUMNS_TO_COMPARE)
-    standard_choices = extract_variables(standard_data['choices'], CHOICES_COLUMNS_TO_COMPARE)
+    standard_survey = extract_variables(standard_data['survey'], SURVEY_COLUMNS_TO_COMPARE + LABEL_COLUMNS)
+    standard_choices = extract_variables(standard_data['choices'], CHOICES_COLUMNS_TO_COMPARE + LABEL_COLUMNS)
+    
+    standard_survey_label_columns = get_available_label_columns(standard_survey)
+    standard_choices_label_columns = get_available_label_columns(standard_choices)
     
     if verbose:
         logging.info("Comparing country surveys with standard template...")
     
     for country, data in country_data.items():
-        country_survey = extract_variables(data['survey'], SURVEY_COLUMNS_TO_COMPARE)
-        country_choices = extract_variables(data['choices'], CHOICES_COLUMNS_TO_COMPARE)
+        country_survey = extract_variables(data['survey'], SURVEY_COLUMNS_TO_COMPARE + LABEL_COLUMNS)
+        country_choices = extract_variables(data['choices'], CHOICES_COLUMNS_TO_COMPARE + LABEL_COLUMNS)
+        
+        country_survey_label_columns = get_available_label_columns(country_survey)
+        country_choices_label_columns = get_available_label_columns(country_choices)
+        
         country_discrepancies = []
         
         if verbose:
@@ -126,7 +177,7 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
         # Compare survey tab
         for idx, std_row in standard_survey.iterrows():
             std_name = std_row['name']
-            std_type = std_row['type']
+            std_type = std_row.get('type', '')  # Use get() to avoid KeyError if 'type' is missing
             if std_type in SPECIAL_TYPES:
                 # Skip special types for name matching
                 continue
@@ -141,10 +192,14 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                     'issue': 'Missing in country survey',
                     'matched': 'not matched',
                     'approximate_match': None,
-                    'best_match': None
+                    'best_match': None,
+                    'label_match': None
                 })
             else:
                 for col in SURVEY_COLUMNS_TO_COMPARE:
+                    if col not in std_row or col not in country_row.iloc[0]:
+                        continue  # Skip this column if it's not in both standard and country data
+                    
                     std_value = std_row[col]
                     country_value = country_row.iloc[0][col]
                     
@@ -152,18 +207,27 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         match_status = 'matched'
                         approx_match = None
                         best_match = None
+                        label_match = None
                     elif std_value != country_value:
                         match_status = 'not matched'
                         approx_match, score = find_approximate_match(std_value, country_survey[col].dropna().unique(), threshold)
                         if score >= threshold:
                             best_match = None
+                            label_match = None
                         else:
                             best_match, _ = find_best_match(std_value, country_survey[col].dropna().unique())
+                            if best_match is None and standard_survey_label_columns and country_survey_label_columns:
+                                std_labels = [std_row[label] for label in standard_survey_label_columns if label in std_row.index]
+                                country_labels = country_survey[country_survey_label_columns].stack().dropna().unique()
+                                label_match, label_score = find_label_match(std_labels[0] if std_labels else std_value, country_labels, threshold)
+                            else:
+                                label_match = None
                         approx_match = approx_match if score >= threshold else None
                     else:
                         match_status = 'matched'
                         approx_match = None
                         best_match = None
+                        label_match = None
                     
                     country_discrepancies.append({
                         'tab': 'survey',
@@ -174,13 +238,14 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         'country_value': country_value,
                         'matched': match_status,
                         'approximate_match': approx_match,
-                        'best_match': best_match
+                        'best_match': best_match,
+                        'label_match': label_match
                     })
         
         # Compare choices tab
         for idx, std_row in standard_choices.iterrows():
             std_name = std_row['name']
-            std_list_name = std_row['list_name']
+            std_list_name = std_row.get('list_name', '')  # Use get() to avoid KeyError if 'list_name' is missing
             country_row = country_choices[(country_choices['name'] == std_name) & 
                                           (country_choices['list_name'] == std_list_name)]
             
@@ -193,10 +258,14 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                     'issue': 'Missing in country choices',
                     'matched': 'not matched',
                     'approximate_match': None,
-                    'best_match': None
+                    'best_match': None,
+                    'label_match': None
                 })
             else:
                 for col in CHOICES_COLUMNS_TO_COMPARE:
+                    if col not in std_row or col not in country_row.iloc[0]:
+                        continue  # Skip this column if it's not in both standard and country data
+                    
                     std_value = std_row[col]
                     country_value = country_row.iloc[0][col]
                     
@@ -204,18 +273,27 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         match_status = 'matched'
                         approx_match = None
                         best_match = None
+                        label_match = None
                     elif std_value != country_value:
                         match_status = 'not matched'
                         approx_match, score = find_approximate_match(std_value, country_choices[col].dropna().unique(), threshold)
                         if score >= threshold:
                             best_match = None
+                            label_match = None
                         else:
                             best_match, _ = find_best_match(std_value, country_choices[col].dropna().unique())
+                            if best_match is None and standard_choices_label_columns and country_choices_label_columns:
+                                std_labels = [std_row[label] for label in standard_choices_label_columns if label in std_row.index]
+                                country_labels = country_choices[country_choices_label_columns].stack().dropna().unique()
+                                label_match, label_score = find_label_match(std_labels[0] if std_labels else std_value, country_labels, threshold)
+                            else:
+                                label_match = None
                         approx_match = approx_match if score >= threshold else None
                     else:
                         match_status = 'matched'
                         approx_match = None
                         best_match = None
+                        label_match = None
                     
                     country_discrepancies.append({
                         'tab': 'choices',
@@ -227,7 +305,8 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         'country_value': country_value,
                         'matched': match_status,
                         'approximate_match': approx_match,
-                        'best_match': best_match
+                        'best_match': best_match,
+                        'label_match': label_match
                     })
         
         if country_discrepancies:
