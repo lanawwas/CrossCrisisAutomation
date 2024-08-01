@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pandas as pd
+import numpy as np
 import os
 import argparse
 import logging
@@ -61,6 +62,11 @@ def load_standard_template(file_path: str, verbose: bool):
 def extract_variables(df, columns_to_compare):
     return df[columns_to_compare]
 
+def is_empty_or_nan(value):
+    if isinstance(value, float):
+        return np.isnan(value)
+    return value is None or str(value).strip() == ''
+
 def find_approximate_match(value, candidates, threshold):
     best_match = None
     highest_score = 0
@@ -80,6 +86,25 @@ def find_approximate_match(value, candidates, threshold):
         if score > highest_score and score >= threshold:
             highest_score = score
             best_match = candidate
+    return best_match, highest_score
+
+def find_best_match(value, candidates):
+    best_match = None
+    highest_score = 0
+    
+    value_str = str(value) if not is_empty_or_nan(value) else ""
+    
+    for candidate in candidates:
+        candidate_str = str(candidate) if not is_empty_or_nan(candidate) else ""
+        
+        if not value_str or not candidate_str:
+            continue
+        
+        score = fuzz.ratio(value_str, candidate_str)
+        if score > highest_score:
+            highest_score = score
+            best_match = candidate
+    
     return best_match, highest_score
 
 def compare_with_standard(country_data, standard_data, verbose: bool, threshold: int):
@@ -115,33 +140,42 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                     'name': std_name,
                     'issue': 'Missing in country survey',
                     'matched': 'not matched',
-                    'approximate_match': None
+                    'approximate_match': None,
+                    'best_match': None
                 })
             else:
                 for col in SURVEY_COLUMNS_TO_COMPARE:
-                    if std_row[col] != country_row.iloc[0][col]:
-                        approximate_match, score = find_approximate_match(std_row[col], country_survey[col].dropna().unique(), threshold)
-                        country_discrepancies.append({
-                            'tab': 'survey',
-                            'row': idx + 2,
-                            'name': std_name,
-                            'column': col,
-                            'standard_value': std_row[col],
-                            'country_value': country_row.iloc[0][col],
-                            'matched': 'not matched',
-                            'approximate_match': approximate_match if score >= threshold else None
-                        })
+                    std_value = std_row[col]
+                    country_value = country_row.iloc[0][col]
+                    
+                    if is_empty_or_nan(std_value) and is_empty_or_nan(country_value):
+                        match_status = 'matched'
+                        approx_match = None
+                        best_match = None
+                    elif std_value != country_value:
+                        match_status = 'not matched'
+                        approx_match, score = find_approximate_match(std_value, country_survey[col].dropna().unique(), threshold)
+                        if score >= threshold:
+                            best_match = None
+                        else:
+                            best_match, _ = find_best_match(std_value, country_survey[col].dropna().unique())
+                        approx_match = approx_match if score >= threshold else None
                     else:
-                        country_discrepancies.append({
-                            'tab': 'survey',
-                            'row': idx + 2,
-                            'name': std_name,
-                            'column': col,
-                            'standard_value': std_row[col],
-                            'country_value': country_row.iloc[0][col],
-                            'matched': 'matched',
-                            'approximate_match': None
-                        })
+                        match_status = 'matched'
+                        approx_match = None
+                        best_match = None
+                    
+                    country_discrepancies.append({
+                        'tab': 'survey',
+                        'row': idx + 2,
+                        'name': std_name,
+                        'column': col,
+                        'standard_value': std_value,
+                        'country_value': country_value,
+                        'matched': match_status,
+                        'approximate_match': approx_match,
+                        'best_match': best_match
+                    })
         
         # Compare choices tab
         for idx, std_row in standard_choices.iterrows():
@@ -158,35 +192,43 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                     'list_name': std_list_name,
                     'issue': 'Missing in country choices',
                     'matched': 'not matched',
-                    'approximate_match': None
+                    'approximate_match': None,
+                    'best_match': None
                 })
             else:
                 for col in CHOICES_COLUMNS_TO_COMPARE:
-                    if std_row[col] != country_row.iloc[0][col]:
-                        approximate_match, score = find_approximate_match(std_row[col], country_choices[col].dropna().unique(), threshold)
-                        country_discrepancies.append({
-                            'tab': 'choices',
-                            'row': idx + 2,
-                            'name': std_name,
-                            'list_name': std_list_name,
-                            'column': col,
-                            'standard_value': std_row[col],
-                            'country_value': country_row.iloc[0][col],
-                            'matched': 'not matched',
-                            'approximate_match': approximate_match if score >= threshold else None
-                        })
+                    std_value = std_row[col]
+                    country_value = country_row.iloc[0][col]
+                    
+                    if is_empty_or_nan(std_value) and is_empty_or_nan(country_value):
+                        match_status = 'matched'
+                        approx_match = None
+                        best_match = None
+                    elif std_value != country_value:
+                        match_status = 'not matched'
+                        approx_match, score = find_approximate_match(std_value, country_choices[col].dropna().unique(), threshold)
+                        if score >= threshold:
+                            best_match = None
+                        else:
+                            best_match, _ = find_best_match(std_value, country_choices[col].dropna().unique())
+                        approx_match = approx_match if score >= threshold else None
                     else:
-                        country_discrepancies.append({
-                            'tab': 'choices',
-                            'row': idx + 2,
-                            'name': std_name,
-                            'list_name': std_list_name,
-                            'column': col,
-                            'standard_value': std_row[col],
-                            'country_value': country_row.iloc[0][col],
-                            'matched': 'matched',
-                            'approximate_match': None
-                        })
+                        match_status = 'matched'
+                        approx_match = None
+                        best_match = None
+                    
+                    country_discrepancies.append({
+                        'tab': 'choices',
+                        'row': idx + 2,
+                        'name': std_name,
+                        'list_name': std_list_name,
+                        'column': col,
+                        'standard_value': std_value,
+                        'country_value': country_value,
+                        'matched': match_status,
+                        'approximate_match': approx_match,
+                        'best_match': best_match
+                    })
         
         if country_discrepancies:
             discrepancies[country] = country_discrepancies
