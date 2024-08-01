@@ -8,8 +8,10 @@ import logging
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Define the columns we want to compare
-COLUMNS_TO_COMPARE = ['name', 'type', 'calculation', 'relevant', 'constraint']
+# Define the columns we want to compare in the survey tab
+SURVEY_COLUMNS_TO_COMPARE = ['name', 'type', 'calculation', 'relevant', 'constraint']
+# Define the columns we want to compare in the choices tab
+CHOICES_COLUMNS_TO_COMPARE = ['list_name', 'name']
 
 def load_kobo_files(directory: str, verbose: bool):
     survey_data = {}
@@ -30,14 +32,14 @@ def load_kobo_files(directory: str, verbose: bool):
                 files_found += 1
                 countries_found.add(country_code)
                 if verbose:
-                    print(f"Loaded file for country: {country_code}")
+                    logging.info(f"Loaded file for country: {country_code}")
             except Exception as e:
                 if verbose:
-                    print(f"Error loading {filename}: {e}")
+                    logging.error(f"Error loading {filename}: {e}")
     
     if verbose:
-        print(f"Number of files found: {files_found}")
-        print(f"Number of countries found: {len(countries_found)}")
+        logging.info(f"Number of files found: {files_found}")
+        logging.info(f"Number of countries found: {len(countries_found)}")
     
     return survey_data
 
@@ -46,60 +48,82 @@ def load_standard_template(file_path: str, verbose: bool):
         survey_df = pd.read_excel(file_path, sheet_name='survey')
         choices_df = pd.read_excel(file_path, sheet_name='choices')
         if verbose:
-            print("Standard template loaded successfully.")
+            logging.info("Standard template loaded successfully.")
         return {'survey': survey_df, 'choices': choices_df}
     except Exception as e:
         if verbose:
-            print(f"Error loading standard template: {e}")
+            logging.error(f"Error loading standard template: {e}")
         return None
 
-def extract_variables(survey_df):
-    return survey_df[COLUMNS_TO_COMPARE]
+def extract_variables(df, columns_to_compare):
+    return df[columns_to_compare]
 
 def compare_with_standard(country_data, standard_data, verbose: bool):
     discrepancies = {}
-    standard_survey = extract_variables(standard_data['survey'])
+    standard_survey = extract_variables(standard_data['survey'], SURVEY_COLUMNS_TO_COMPARE)
+    standard_choices = extract_variables(standard_data['choices'], CHOICES_COLUMNS_TO_COMPARE)
     
     if verbose:
-        print("Comparing country surveys with standard template...")
+        logging.info("Comparing country surveys with standard template...")
     
     for country, data in country_data.items():
-        country_survey = extract_variables(data['survey'])
+        country_survey = extract_variables(data['survey'], SURVEY_COLUMNS_TO_COMPARE)
+        country_choices = extract_variables(data['choices'], CHOICES_COLUMNS_TO_COMPARE)
         country_discrepancies = []
         
         if verbose:
-            print(f"Processing country: {country}")
+            logging.info(f"Processing country: {country}")
         
-        # Compare each row in standard survey with country survey
-        for _, std_row in standard_survey.iterrows():
+        # Compare survey tab
+        for idx, std_row in standard_survey.iterrows():
             std_name = std_row['name']
             country_row = country_survey[country_survey['name'] == std_name]
             
             if country_row.empty:
                 country_discrepancies.append({
+                    'tab': 'survey',
+                    'row': idx + 2,  # +2 because Excel rows start at 1 and have a header
                     'name': std_name,
                     'issue': 'Missing in country survey'
                 })
             else:
-                for col in COLUMNS_TO_COMPARE:
+                for col in SURVEY_COLUMNS_TO_COMPARE:
                     if std_row[col] != country_row.iloc[0][col]:
                         country_discrepancies.append({
+                            'tab': 'survey',
+                            'row': idx + 2,
                             'name': std_name,
                             'column': col,
                             'standard_value': std_row[col],
                             'country_value': country_row.iloc[0][col]
                         })
         
+        # Compare choices tab
+        for idx, std_row in standard_choices.iterrows():
+            std_name = std_row['name']
+            std_list_name = std_row['list_name']
+            country_row = country_choices[(country_choices['name'] == std_name) & 
+                                          (country_choices['list_name'] == std_list_name)]
+            
+            if country_row.empty:
+                country_discrepancies.append({
+                    'tab': 'choices',
+                    'row': idx + 2,
+                    'name': std_name,
+                    'list_name': std_list_name,
+                    'issue': 'Missing in country choices'
+                })
+        
         if country_discrepancies:
             discrepancies[country] = country_discrepancies
             if verbose:
-                print(f"Discrepancies found for country: {country}")
+                logging.info(f"Discrepancies found for country: {country}")
         else:
             if verbose:
-                print(f"No discrepancies found for country: {country}")
+                logging.info(f"No discrepancies found for country: {country}")
     
     if verbose:
-        print(f"Total countries with discrepancies: {len(discrepancies)}")
+        logging.info(f"Total countries with discrepancies: {len(discrepancies)}")
     
     return discrepancies
 
@@ -108,7 +132,7 @@ def generate_discrepancy_report(discrepancies, output_directory, verbose: bool):
     master_report = []
     
     if verbose:
-        print("Generating discrepancy reports...")
+        logging.info("Generating discrepancy reports...")
     
     for country, country_discrepancies in discrepancies.items():
         country_df = pd.DataFrame(country_discrepancies)
@@ -118,7 +142,7 @@ def generate_discrepancy_report(discrepancies, output_directory, verbose: bool):
         country_report_path = os.path.join(output_directory, f"{country}_discrepancy_report.xlsx")
         country_df.to_excel(country_report_path, index=False)
         if verbose:
-            print(f"Generated report for {country}: {country_report_path}")
+            logging.info(f"Generated report for {country}: {country_report_path}")
         
         master_report.append(country_df)
     
@@ -128,8 +152,8 @@ def generate_discrepancy_report(discrepancies, output_directory, verbose: bool):
     master_df.to_excel(master_report_path, index=False)
     
     if verbose:
-        print(f"Generated master report: {master_report_path}")
-        print("Reports generated successfully.")
+        logging.info(f"Generated master report: {master_report_path}")
+        logging.info("Reports generated successfully.")
 
 def main():
     parser = argparse.ArgumentParser(description="Process KoboToolbox survey files.")
@@ -145,7 +169,7 @@ def main():
     standard_data = load_standard_template(args.standard_template_path, args.verbose)
     
     if standard_data is None:
-        print("Failed to load the standard template. Exiting...")
+        logging.error("Failed to load the standard template. Exiting...")
         return
     
     # 2. Parsing and Initial Mapping
