@@ -6,13 +6,18 @@ chmod +x kmapper.py
 ```
 Running the Script
 
-You can now run the script from the command line by passing the required arguments:
+You can now run the script in verbose mode or silent mode:
+
+Verbose Mode:
 
 ```sh
-
-./kmapper.py /path/to/kobo/files /path/to/standard_template.xlsx /path/to/output/reports
+./kmapper.py tests/CountryKobo/ tests/REACH_2024_MSNA-kobo-tool_draft_v9.xlsx tests/ --verbose
 ```
+Silent Mode:
 
+```sh
+./kmapper.py tests/CountryKobo/ tests/REACH_2024_MSNA-kobo-tool_draft_v9.xlsx tests/
+```
 
 ##ToDO : 
     - Add the flask implementation for the webUI.
