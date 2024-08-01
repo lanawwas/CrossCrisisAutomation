@@ -11,7 +11,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Define the columns we want to compare in the survey tab
 SURVEY_COLUMNS_TO_COMPARE = ['name', 'type', 'calculation', 'relevant', 'constraint']
 # Define the columns we want to compare in the choices tab
-CHOICES_COLUMNS_TO_COMPARE = ['list_name', 'name']
+CHOICES_COLUMNS_TO_COMPARE = ['name', 'list_name']
+# Define the special types
+SPECIAL_TYPES = ['begin_group', 'end_group', 'begin_repeat', 'end_repeat']
 
 def load_kobo_files(directory: str, verbose: bool):
     survey_data = {}
@@ -77,6 +79,11 @@ def compare_with_standard(country_data, standard_data, verbose: bool):
         # Compare survey tab
         for idx, std_row in standard_survey.iterrows():
             std_name = std_row['name']
+            std_type = std_row['type']
+            if std_type in SPECIAL_TYPES:
+                # Skip special types for name matching
+                continue
+            
             country_row = country_survey[country_survey['name'] == std_name]
             
             if country_row.empty:
