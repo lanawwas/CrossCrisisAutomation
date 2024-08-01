@@ -82,6 +82,7 @@ def preprocess_text(text):
         return ""
     text = str(text).lower()
     text = re.sub(r'[^\w\s]', '', text)  # Remove punctuation
+    text = re.sub(r'[_\s]+', ' ', text)  # Replace underscores and multiple spaces with a single space
     return text.strip()
 
 def find_approximate_match(value, candidates, threshold):
@@ -99,7 +100,7 @@ def find_approximate_match(value, candidates, threshold):
         if not value_str or not candidate_str:
             continue
         
-        score = fuzz.ratio(value_str, candidate_str)
+        score = fuzz.token_set_ratio(value_str, candidate_str)
         if score > highest_score and score >= threshold:
             highest_score = score
             best_match = candidate
@@ -109,15 +110,34 @@ def find_best_match(value, candidates):
     best_match = None
     highest_score = 0
     
-    value_str = str(value) if not is_empty_or_nan(value) else ""
+    value_str = preprocess_text(value) if not is_empty_or_nan(value) else ""
     
     for candidate in candidates:
-        candidate_str = str(candidate) if not is_empty_or_nan(candidate) else ""
+        candidate_str = preprocess_text(candidate) if not is_empty_or_nan(candidate) else ""
         
         if not value_str or not candidate_str:
             continue
         
-        score = fuzz.ratio(value_str, candidate_str)
+        score = fuzz.partial_ratio(value_str, candidate_str)
+        if score > highest_score:
+            highest_score = score
+            best_match = candidate
+    
+    return best_match, highest_score
+
+def find_token_match(value, candidates):
+    best_match = None
+    highest_score = 0
+    
+    value_str = preprocess_text(value) if not is_empty_or_nan(value) else ""
+    
+    for candidate in candidates:
+        candidate_str = preprocess_text(candidate) if not is_empty_or_nan(candidate) else ""
+        
+        if not value_str or not candidate_str:
+            continue
+        
+        score = fuzz.token_sort_ratio(value_str, candidate_str)
         if score > highest_score:
             highest_score = score
             best_match = candidate
@@ -145,6 +165,11 @@ def find_label_match(std_value, country_labels, threshold):
     
     # Partial ratio (handles substring matches)
     best_match, score = process.extractOne(std_value, country_labels, scorer=fuzz.partial_ratio)
+    if score >= threshold:
+        return best_match, score
+    
+    # Token set ratio (handles unordered token matches)
+    best_match, score = process.extractOne(std_value, country_labels, scorer=fuzz.token_set_ratio)
     if score >= threshold:
         return best_match, score
     
@@ -193,6 +218,7 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                     'matched': 'not matched',
                     'approximate_match': None,
                     'best_match': None,
+                    'token_match': None,
                     'label_match': None
                 })
             else:
@@ -207,26 +233,37 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         match_status = 'matched'
                         approx_match = None
                         best_match = None
+                        token_match = None
                         label_match = None
                     elif std_value != country_value:
                         match_status = 'not matched'
                         approx_match, score = find_approximate_match(std_value, country_survey[col].dropna().unique(), threshold)
                         if score >= threshold:
                             best_match = None
+                            token_match = None
                             label_match = None
                         else:
-                            best_match, _ = find_best_match(std_value, country_survey[col].dropna().unique())
-                            if best_match is None and standard_survey_label_columns and country_survey_label_columns:
-                                std_labels = [std_row[label] for label in standard_survey_label_columns if label in std_row.index]
-                                country_labels = country_survey[country_survey_label_columns].stack().dropna().unique()
-                                label_match, label_score = find_label_match(std_labels[0] if std_labels else std_value, country_labels, threshold)
-                            else:
+                            best_match, best_score = find_best_match(std_value, country_survey[col].dropna().unique())
+                            if best_score >= threshold:
+                                token_match = None
                                 label_match = None
+                            else:
+                                token_match, token_score = find_token_match(std_value, country_survey[col].dropna().unique())
+                                if token_score < threshold:
+                                    if standard_survey_label_columns and country_survey_label_columns:
+                                        std_labels = [std_row[label] for label in standard_survey_label_columns if label in std_row.index]
+                                        country_labels = country_survey[country_survey_label_columns].stack().dropna().unique()
+                                        label_match, label_score = find_label_match(std_labels[0] if std_labels else std_value, country_labels, threshold)
+                                    else:
+                                        label_match = None
+                                else:
+                                    label_match = None
                         approx_match = approx_match if score >= threshold else None
                     else:
                         match_status = 'matched'
                         approx_match = None
                         best_match = None
+                        token_match = None
                         label_match = None
                     
                     country_discrepancies.append({
@@ -239,6 +276,7 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         'matched': match_status,
                         'approximate_match': approx_match,
                         'best_match': best_match,
+                        'token_match': token_match,
                         'label_match': label_match
                     })
         
@@ -259,6 +297,7 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                     'matched': 'not matched',
                     'approximate_match': None,
                     'best_match': None,
+                    'token_match': None,
                     'label_match': None
                 })
             else:
@@ -273,26 +312,37 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         match_status = 'matched'
                         approx_match = None
                         best_match = None
+                        token_match = None
                         label_match = None
                     elif std_value != country_value:
                         match_status = 'not matched'
                         approx_match, score = find_approximate_match(std_value, country_choices[col].dropna().unique(), threshold)
                         if score >= threshold:
                             best_match = None
+                            token_match = None
                             label_match = None
                         else:
-                            best_match, _ = find_best_match(std_value, country_choices[col].dropna().unique())
-                            if best_match is None and standard_choices_label_columns and country_choices_label_columns:
-                                std_labels = [std_row[label] for label in standard_choices_label_columns if label in std_row.index]
-                                country_labels = country_choices[country_choices_label_columns].stack().dropna().unique()
-                                label_match, label_score = find_label_match(std_labels[0] if std_labels else std_value, country_labels, threshold)
-                            else:
+                            best_match, best_score = find_best_match(std_value, country_choices[col].dropna().unique())
+                            if best_score >= threshold:
+                                token_match = None
                                 label_match = None
+                            else:
+                                token_match, token_score = find_token_match(std_value, country_choices[col].dropna().unique())
+                                if token_score < threshold:
+                                    if standard_choices_label_columns and country_choices_label_columns:
+                                        std_labels = [std_row[label] for label in standard_choices_label_columns if label in std_row.index]
+                                        country_labels = country_choices[country_choices_label_columns].stack().dropna().unique()
+                                        label_match, label_score = find_label_match(std_labels[0] if std_labels else std_value, country_labels, threshold)
+                                    else:
+                                        label_match = None
+                                else:
+                                    label_match = None
                         approx_match = approx_match if score >= threshold else None
                     else:
                         match_status = 'matched'
                         approx_match = None
                         best_match = None
+                        token_match = None
                         label_match = None
                     
                     country_discrepancies.append({
@@ -306,6 +356,7 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         'matched': match_status,
                         'approximate_match': approx_match,
                         'best_match': best_match,
+                        'token_match': token_match,
                         'label_match': label_match
                     })
         
