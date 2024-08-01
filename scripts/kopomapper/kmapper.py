@@ -4,6 +4,7 @@ import pandas as pd
 import os
 import argparse
 import logging
+from fuzzywuzzy import fuzz
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -60,7 +61,28 @@ def load_standard_template(file_path: str, verbose: bool):
 def extract_variables(df, columns_to_compare):
     return df[columns_to_compare]
 
-def compare_with_standard(country_data, standard_data, verbose: bool):
+def find_approximate_match(value, candidates, threshold):
+    best_match = None
+    highest_score = 0
+    
+    # Convert value to string if it's not already
+    value_str = str(value) if value is not None else ""
+    
+    for candidate in candidates:
+        # Convert candidate to string if it's not already
+        candidate_str = str(candidate) if candidate is not None else ""
+        
+        # Skip empty strings
+        if not value_str or not candidate_str:
+            continue
+        
+        score = fuzz.ratio(value_str, candidate_str)
+        if score > highest_score and score >= threshold:
+            highest_score = score
+            best_match = candidate
+    return best_match, highest_score
+
+def compare_with_standard(country_data, standard_data, verbose: bool, threshold: int):
     discrepancies = {}
     standard_survey = extract_variables(standard_data['survey'], SURVEY_COLUMNS_TO_COMPARE)
     standard_choices = extract_variables(standard_data['choices'], CHOICES_COLUMNS_TO_COMPARE)
@@ -91,18 +113,34 @@ def compare_with_standard(country_data, standard_data, verbose: bool):
                     'tab': 'survey',
                     'row': idx + 2,  # +2 because Excel rows start at 1 and have a header
                     'name': std_name,
-                    'issue': 'Missing in country survey'
+                    'issue': 'Missing in country survey',
+                    'matched': 'not matched',
+                    'approximate_match': None
                 })
             else:
                 for col in SURVEY_COLUMNS_TO_COMPARE:
                     if std_row[col] != country_row.iloc[0][col]:
+                        approximate_match, score = find_approximate_match(std_row[col], country_survey[col].dropna().unique(), threshold)
                         country_discrepancies.append({
                             'tab': 'survey',
                             'row': idx + 2,
                             'name': std_name,
                             'column': col,
                             'standard_value': std_row[col],
-                            'country_value': country_row.iloc[0][col]
+                            'country_value': country_row.iloc[0][col],
+                            'matched': 'not matched',
+                            'approximate_match': approximate_match if score >= threshold else None
+                        })
+                    else:
+                        country_discrepancies.append({
+                            'tab': 'survey',
+                            'row': idx + 2,
+                            'name': std_name,
+                            'column': col,
+                            'standard_value': std_row[col],
+                            'country_value': country_row.iloc[0][col],
+                            'matched': 'matched',
+                            'approximate_match': None
                         })
         
         # Compare choices tab
@@ -118,8 +156,37 @@ def compare_with_standard(country_data, standard_data, verbose: bool):
                     'row': idx + 2,
                     'name': std_name,
                     'list_name': std_list_name,
-                    'issue': 'Missing in country choices'
+                    'issue': 'Missing in country choices',
+                    'matched': 'not matched',
+                    'approximate_match': None
                 })
+            else:
+                for col in CHOICES_COLUMNS_TO_COMPARE:
+                    if std_row[col] != country_row.iloc[0][col]:
+                        approximate_match, score = find_approximate_match(std_row[col], country_choices[col].dropna().unique(), threshold)
+                        country_discrepancies.append({
+                            'tab': 'choices',
+                            'row': idx + 2,
+                            'name': std_name,
+                            'list_name': std_list_name,
+                            'column': col,
+                            'standard_value': std_row[col],
+                            'country_value': country_row.iloc[0][col],
+                            'matched': 'not matched',
+                            'approximate_match': approximate_match if score >= threshold else None
+                        })
+                    else:
+                        country_discrepancies.append({
+                            'tab': 'choices',
+                            'row': idx + 2,
+                            'name': std_name,
+                            'list_name': std_list_name,
+                            'column': col,
+                            'standard_value': std_row[col],
+                            'country_value': country_row.iloc[0][col],
+                            'matched': 'matched',
+                            'approximate_match': None
+                        })
         
         if country_discrepancies:
             discrepancies[country] = country_discrepancies
@@ -168,6 +235,7 @@ def main():
     parser.add_argument("standard_template_path", help="Path to the standard survey template.")
     parser.add_argument("output_directory", help="Directory to save discrepancy reports.")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging.")
+    parser.add_argument("--threshold", type=int, default=90, help="Threshold for approximate matching (default: 90).")
     
     args = parser.parse_args()
     
@@ -180,7 +248,7 @@ def main():
         return
     
     # 2. Parsing and Initial Mapping
-    discrepancies = compare_with_standard(country_data, standard_data, args.verbose)
+    discrepancies = compare_with_standard(country_data, standard_data, args.verbose, args.threshold)
     
     # 3. Generate Initial Reports
     generate_discrepancy_report(discrepancies, args.output_directory, args.verbose)
