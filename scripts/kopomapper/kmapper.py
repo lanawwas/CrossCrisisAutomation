@@ -13,7 +13,7 @@ import re
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Define the columns we want to compare in the survey tab
-SURVEY_COLUMNS_TO_COMPARE = ['name', 'type', 'calculation', 'relevant', 'constraint']
+SURVEY_COLUMNS_TO_COMPARE = ['name', 'type', 'calculation', 'relevant', 'constraint', 'label::English', 'label::French']
 # Define the columns we want to compare in the choices tab
 CHOICES_COLUMNS_TO_COMPARE = ['name', 'list_name']
 # Define the special types
@@ -210,17 +210,18 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
             country_row = country_survey[country_survey['name'] == std_name]
             
             if country_row.empty:
-                country_discrepancies.append({
-                    'tab': 'survey',
-                    'row': idx + 2,  # +2 because Excel rows start at 1 and have a header
-                    'name': std_name,
-                    'issue': 'Missing in country survey',
-                    'matched': 'not matched',
-                    'approximate_match': None,
-                    'best_match': None,
-                    'token_match': None,
-                    'label_match': None
-                })
+                if not is_empty_or_nan(std_row['name']):  # Only add discrepancy if standard row is not empty
+                    country_discrepancies.append({
+                        'tab': 'survey',
+                        'row': idx + 2,  # +2 because Excel rows start at 1 and have a header
+                        'name': std_name,
+                        'issue': 'Missing in country survey',
+                        'matched': 'not matched',
+                        'approximate_match': None,
+                        'best_match': None,
+                        'token_match': None,
+                        'label_match': None
+                    })
             else:
                 for col in SURVEY_COLUMNS_TO_COMPARE:
                     if col not in std_row or col not in country_row.iloc[0]:
@@ -288,18 +289,19 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                                           (country_choices['list_name'] == std_list_name)]
             
             if country_row.empty:
-                country_discrepancies.append({
-                    'tab': 'choices',
-                    'row': idx + 2,
-                    'name': std_name,
-                    'list_name': std_list_name,
-                    'issue': 'Missing in country choices',
-                    'matched': 'not matched',
-                    'approximate_match': None,
-                    'best_match': None,
-                    'token_match': None,
-                    'label_match': None
-                })
+                if not is_empty_or_nan(std_row['name']) and not is_empty_or_nan(std_row['list_name']):  # Only add discrepancy if standard row is not empty
+                    country_discrepancies.append({
+                        'tab': 'choices',
+                        'row': idx + 2,
+                        'name': std_name,
+                        'list_name': std_list_name,
+                        'issue': 'Missing in country choices',
+                        'matched': 'not matched',
+                        'approximate_match': None,
+                        'best_match': None,
+                        'token_match': None,
+                        'label_match': None
+                    })
             else:
                 for col in CHOICES_COLUMNS_TO_COMPARE:
                     if col not in std_row or col not in country_row.iloc[0]:
