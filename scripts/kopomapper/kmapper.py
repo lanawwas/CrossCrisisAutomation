@@ -64,7 +64,8 @@ def load_standard_template(file_path: str, verbose: bool):
         return None
 
 def extract_variables(df, columns_to_compare):
-    """Extract only the columns that exist in the DataFrame."""
+    """Extract only the columns that exist in the DataFrame and remove leading/trailing spaces."""
+    df = df.map(lambda x: x.strip() if isinstance(x, str) else x) # Remove leading/trailing spaces from variable names
     return df[[col for col in columns_to_compare if col in df.columns]]
 
 def get_available_label_columns(df):
@@ -83,7 +84,7 @@ def preprocess_text(text):
     text = str(text).lower()
     text = re.sub(r'[^\w\s]', '', text)  # Remove punctuation
     text = re.sub(r'[_\s]+', ' ', text)  # Replace underscores and multiple spaces with a single space
-    return text.strip()
+    return text.strip() # Remove leading/trailing spaces
 
 def find_approximate_match(value, candidates, threshold):
     best_match = None
