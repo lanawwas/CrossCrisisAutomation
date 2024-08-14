@@ -1,12 +1,14 @@
 custom_rules:
   - name: impute_missing_values
     variable: age
+    county: XXX
     script: |
       if (is.na(age)) {
         age <- mean(age, na.rm = TRUE)
       }
   - name: categorize_income
     variable: income_level
+    county: XXX
     script: |
       if (income_level < 30000) {
         income_level <- "Low"
