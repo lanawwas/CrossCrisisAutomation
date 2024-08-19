@@ -12,16 +12,17 @@ source /msna/CrossCrisisAutomation/scripts/MSNADataPortal/env/bin/activate
 # Load YAML parser function using Python
 parse_yaml() {
     python -c "
-import yaml, sys
+import yaml, sys, json
 try:
     config = yaml.safe_load(sys.stdin.read())
     result = eval('config' + '$1')
     if isinstance(result, list):
-        print(' '.join(str(item) for item in result))
+        print(json.dumps(result))
     else:
         print(result)
-except:
-    print('')
+except Exception as e:
+    print(f'Error: {str(e)}', file=sys.stderr)
+    sys.exit(1)
 " < "$2"
 }
 
@@ -66,7 +67,6 @@ POSTGRES_PORT=$(parse_yaml "['services']['postgres']['port']" $CONFIG_FILE)
 PGADMIN_DEFAULT_EMAIL=$(parse_yaml "['services']['pgadmin']['default_email']" $CONFIG_FILE)
 PGADMIN_PORT=$(parse_yaml "['services']['pgadmin']['port']" $CONFIG_FILE)
 JUPYTERHUB_PORT=$(parse_yaml "['services']['jupyterhub']['port']" $CONFIG_FILE)
-#RSTUDIO_USER=$(parse_yaml "['services']['rstudio']['user']" $CONFIG_FILE)
 RSTUDIO_BASE_PORT=$(parse_yaml "['services']['rstudio']['base_port']" $CONFIG_FILE)
 AIRFLOW_PORT=$(parse_yaml "['services']['airflow']['port']" $CONFIG_FILE)
 POSTGREST_PORT=$(parse_yaml "['services']['postgrest']['port']" $CONFIG_FILE)
@@ -76,6 +76,8 @@ FLASK_PORT=$(parse_yaml "['services']['flask']['port']" $CONFIG_FILE)
 VSCODE_PORT=$(parse_yaml "['services']['vscode']['port']" $CONFIG_FILE)
 NGINX_HTTP_PORT=$(parse_yaml "['services']['nginx']['http_port']" $CONFIG_FILE)
 NGINX_HTTPS_PORT=$(parse_yaml "['services']['nginx']['https_port']" $CONFIG_FILE)
+
+# Load users with their passwords
 USERS=$(parse_yaml "['users']" $CONFIG_FILE)
 
 # Placeholder for secure passwords
@@ -236,8 +238,9 @@ EOF
 
 # Add RStudio services
 local port_offset=0
-for user_entry in ${USERS}; do
-    IFS=':' read -r username password <<< "$user_entry"
+echo "$USERS" | jq -c '.[]' | while read -r user_entry; do
+    username=$(echo "$user_entry" | cut -d':' -f1)
+    password=$(echo "$user_entry" | cut -d':' -f2)
     cat << EOF >> docker-compose.yml
   rstudio_${username}:
     image: rocker/rstudio:latest
