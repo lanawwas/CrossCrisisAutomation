@@ -11,7 +11,18 @@ source /msna/CrossCrisisAutomation/scripts/MSNADataPortal/env/bin/activate
 
 # Load YAML parser function using Python
 parse_yaml() {
-    python -c "import yaml,sys; print(yaml.safe_load(sys.stdin.read())$1)" < "$2"
+    python -c "
+import yaml, sys
+try:
+    config = yaml.safe_load(sys.stdin.read())
+    result = eval('config' + '$1')
+    if isinstance(result, list):
+        print(' '.join(str(item) for item in result))
+    else:
+        print(result)
+except:
+    print('')
+" < "$2"
 }
 
 # Configuration
@@ -90,12 +101,9 @@ c.JupyterHub.port = ${JUPYTERHUB_PORT}
 c.JupyterHub.bind_url = 'http://:8000/'
 
 # Predefined users
-c.Authenticator.allowed_users = set([${USERS}])
+c.Authenticator.allowed_users = set([$(echo ${USERS} | sed 's/:[^ ]*//g')])
 EOF
 }
-
-# Generate JupyterHub configuration 
-generate_jupyterhub_config
 
 # Docker Compose configuration
 generate_docker_compose() {
@@ -226,12 +234,11 @@ networks:
 #    external: true
 EOF
 
-    # Add RStudio services
-    local port_offset=0
-    for user_entry in ${USERS}; do
-	    IFS=':' read -r username password <<< "$user_entry"
-	    
-        cat << EOF >> docker-compose.yml
+# Add RStudio services
+local port_offset=0
+for user_entry in ${USERS}; do
+    IFS=':' read -r username password <<< "$user_entry"
+    cat << EOF >> docker-compose.yml
   rstudio_${username}:
     image: rocker/rstudio:latest
     container_name: rstudio_${username}
@@ -245,9 +252,8 @@ EOF
     networks:
       - app-network
 EOF
-        port_offset=$((port_offset + 1))
-    done
-}
+    port_offset=$((port_offset + 1))
+done
 
 # Generate Docker Compose file
 generate_docker_compose

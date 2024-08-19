@@ -1,23 +1,23 @@
-version: "1.0"
+version: '3.8'
 services:
   postgres:
     user: msna
     db: msna
     port: 5432
-      #secrets:
-      #- POSTGRES_PASSWORD
+    #secrets:
+    #  - POSTGRES_PASSWORD
   pgadmin:
     default_email: admin@example.com
     port: 80
-      #secrets:
-      #- PGADMIN_DEFAULT_PASSWORD
+    #secrets:
+    #  - PGADMIN_DEFAULT_PASSWORD
   jupyterhub:
     port: 8000
   rstudio:
     #user: rstudio
     base_port: 8787
-      #secrets:
-      #- RSTUDIO_PASSWORD
+    #secrets:
+    #  - RSTUDIO_PASSWORD
   airflow:
     port: 8080
   postgrest:
