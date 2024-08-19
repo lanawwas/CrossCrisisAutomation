@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Load environment variables
-source .env
+#source .env
 
 # Activate the Python virtual environment 
 
@@ -228,13 +228,16 @@ EOF
 
     # Add RStudio services
     local port_offset=0
-    for user in $(parse_yaml "['users']" "${CONFIG_FILE}"); do
+    for user_entry in ${USERS}; do
+	    IFS=':' read -r username password <<< "$user_entry"
+	    
         cat << EOF >> docker-compose.yml
-  rstudio_${user}:
+  rstudio_${username}:
     image: rocker/rstudio:latest
-    container_name: rstudio_${user}
+    container_name: rstudio_${username}
     environment:
-      USER: ${user}
+      USER: ${username}
+      PASSWORD: ${password}
     ports:
       - "$((RSTUDIO_BASE_PORT + port_offset)):8787"
     depends_on:

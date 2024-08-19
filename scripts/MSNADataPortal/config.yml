@@ -15,7 +15,7 @@ services:
     port: 8000
   rstudio:
     #user: rstudio
-    Base_port: 8787
+    base_port: 8787
       #secrets:
       #- RSTUDIO_PASSWORD
   airflow:
@@ -32,12 +32,8 @@ services:
     http_port: 80
     https_port: 443
 
-users: 
-  - username: admin
-    password: admin
-  - username: sunhee
-    password: sunhee
-  - username: mario
-    password: mario
-  - username: guillaume
-    password: guillaume
+users:
+  - "admin:admin"
+  - "sunhee:sunhee"
+  - "mario:mario"
+  - "guillaume:guillaume"
