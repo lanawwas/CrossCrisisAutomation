@@ -1,6 +1,9 @@
 #!/bin/bash
 
-set -e  # Exit immediately if a command exits with a non-zero status
+set -euo pipefail
+
+# Load environment variables
+source .env
 
 # Activate the Python virtual environment 
 
@@ -8,7 +11,7 @@ source /msna/CrossCrisisAutomation/scripts/MSNADataPortal/env/bin/activate
 
 # Load YAML parser function using Python
 parse_yaml() {
-   python -c "import yaml,sys; print(yaml.safe_load(sys.stdin.read())$1)" < "$2"
+    python -c "import yaml,sys; print(yaml.safe_load(sys.stdin.read())$1)" < "$2"
 }
 
 # Configuration
@@ -17,17 +20,17 @@ CONFIG_FILE="config.yml"
 # Function to check if a Docker container is already running
 is_container_running() {
     local container_name=$1
-    if [ "$(docker ps -q -f name=${container_name})" ]; then
+    if docker ps -q -f name="${container_name}" > /dev/null 2>&1; then
         echo "true"
     else
         echo "false"
     fi
 }
 
-# Function to check if Docker secret already exists
+# Function to check if Docker secret exists
 is_secret_exist() {
     local secret_name=$1
-    if [ "$(docker secret ls | grep ${secret_name})" ]; then
+    if docker secret inspect "${secret_name}" > /dev/null 2>&1; then
         echo "true"
     else
         echo "false"
@@ -38,9 +41,8 @@ is_secret_exist() {
 create_docker_secret() {
     local secret_name=$1
     local secret_value=$2
-
-    if [ "$(is_secret_exist ${secret_name})" == "false" ]; then
-        echo "${secret_value}" | docker secret create ${secret_name} -
+    if [ "$(is_secret_exist "${secret_name}")" == "false" ]; then
+        echo "${secret_value}" | docker secret create "${secret_name}" -
     else
         echo "Docker secret '${secret_name}' already exists."
     fi
@@ -74,17 +76,16 @@ create_docker_secret "POSTGRES_PASSWORD" "${POSTGRES_PASSWORD}"
 create_docker_secret "PGADMIN_DEFAULT_PASSWORD" "${PGADMIN_DEFAULT_PASSWORD}"
 #create_docker_secret "RSTUDIO_PASSWORD" "${RSTUDIO_PASSWORD}"
 
-# JupyterHub Configuration 
- generate_jupyterhub_config() {
-	 mkdir -p jupyterhub
-	 
-	 cat <<EOF > jupyterhub/jupyterhub_config.py 
+# Generate configurations
+generate_jupyterhub_config() {
+    mkdir -p jupyterhub
+    cat << EOF > jupyterhub/jupyterhub_config.py
 c = get_config()
 
 # JupyterHub Configuration 
-c.JupyterHub.spawner_class = 'dockerspawner.DockerSpawner' 
-c.DockerSpawner.image = 'jupyter/base-notebook:latest' 
-c.JupyterHub_hub_ip = 'jupyterhub'
+c.JupyterHub.spawner_class = 'dockerspawner.DockerSpawner'
+c.DockerSpawner.image = 'jupyter/base-notebook:latest'
+c.JupyterHub.hub_ip = 'jupyterhub'
 c.JupyterHub.port = ${JUPYTERHUB_PORT}
 c.JupyterHub.bind_url = 'http://:8000/'
 
@@ -98,9 +99,8 @@ generate_jupyterhub_config
 
 # Docker Compose configuration
 generate_docker_compose() {
-cat <<EOF > docker-compose.yml
+    cat << EOF > docker-compose.yml
 version: '3.8'
-
 services:
   postgres:
     image: postgres:13
@@ -116,7 +116,11 @@ services:
       - "${POSTGRES_PORT}:5432"
     networks:
       - app-network
-
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
   pgadmin:
     image: dpage/pgadmin4
     container_name: pgadmin
@@ -137,19 +141,7 @@ services:
     volumes:
       - ./jupyterhub:/srv/jupyterhub
     ports:
-      - "${JUPYTER_PORT}:8000"
-    networks:
-      - app-network
-
-  rstudio:
-    image: rocker/verse
-    container_name: rstudio
-    environment:
-      USER: ${RSTUDIO_USER}
-    secrets:
-      - RSTUDIO_PASSWORD
-    ports:
-      - "${RSTUDIO_PORT}:8787"
+      - "${JUPYTERHUB_PORT}:8000"
     networks:
       - app-network
 
@@ -184,15 +176,15 @@ services:
     networks:
       - app-network
 
-  vscode
+  vscode:
     image: codercom/code-server:latest
     container_name: vscode
-    environment: 
- 	PASSWORD: test
-    volumes: 
-	- "${VSCODE_PORT}:8443"
-    networks: 
-	-app-network
+    environment:
+      PASSWORD: test
+    ports:
+      - "${VSCODE_PORT}:8443"
+    networks:
+      - app-network
 
   flask:
     image: flask_app_image  # Placeholder; replace with actual Docker image
@@ -234,25 +226,24 @@ networks:
 #    external: true
 EOF
 
-# Add Rstudio services
-  port_offest=0 
-  for user in $(parse_yaml "['users']" $CONFIG_FILE); do 
-    cat << EOF >> docker-compose.yml 
+    # Add RStudio services
+    local port_offset=0
+    for user in $(parse_yaml "['users']" "${CONFIG_FILE}"); do
+        cat << EOF >> docker-compose.yml
   rstudio_${user}:
     image: rocker/rstudio:latest
     container_name: rstudio_${user}
-    enviroment: 
-	USER: ${user} 
-    ports: 
-	- "$((RSTUDIO_BASE_PORT + port_offset)):8787"
-    depends_on: 
-	- postgres
-    networks: 
-	- app-network 
+    environment:
+      USER: ${user}
+    ports:
+      - "$((RSTUDIO_BASE_PORT + port_offset)):8787"
+    depends_on:
+      - postgres
+    networks:
+      - app-network
 EOF
-    port_offset=$((port_offset +1))
-done 
-
+        port_offset=$((port_offset + 1))
+    done
 }
 
 # Generate Docker Compose file
@@ -260,33 +251,26 @@ generate_docker_compose
 
 # NGINX configuration
 generate_nginx_conf() {
-mkdir -p nginx
-
-cat <<EOF > nginx/nginx.conf
-user  nginx;
-worker_processes  1;
-
-error_log  /var/log/nginx/error.log warn;
-pid        /var/run/nginx.pid;
+    mkdir -p nginx
+    cat << EOF > nginx/nginx.conf
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
 
 events {
-    worker_connections  1024;
+    worker_connections 1024;
 }
 
 http {
-    include       /etc/nginx/mime.types;
-    default_type  application/octet-stream;
-
-    log_format  main  '\$remote_addr - \$remote_user [\$time_local] "\$request" '
-                      '\$status \$body_bytes_sent "\$http_referer" '
-                      '"\$http_user_agent" "\$http_x_forwarded_for"';
-
-    access_log  /var/log/nginx/access.log  main;
-
-    sendfile        on;
-    keepalive_timeout  65;
-
-    include /etc/nginx/conf.d/*.conf;
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    log_format main '\$remote_addr - \$remote_user [\$time_local] "\$request" '
+                    '\$status \$body_bytes_sent "\$http_referer" '
+                    '"\$http_user_agent" "\$http_x_forwarded_for"';
+    access_log /var/log/nginx/access.log main;
+    sendfile on;
+    keepalive_timeout 65;
 
     server {
         listen 80;
@@ -300,8 +284,8 @@ http {
             proxy_set_header X-Forwarded-Proto \$scheme;
         }
 
-        location /jupyter {
-            proxy_pass http://jupyter:8888;
+        location /jupyterhub {
+            proxy_pass http://jupyterhub:8000;
             proxy_set_header Host \$host;
             proxy_set_header X-Real-IP \$remote_addr;
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -377,11 +361,13 @@ generate_flask_app
 # Function to start the Docker Compose services
 start_services() {
     docker-compose up -d
+    echo "Services started successfully."
 }
 
-# Function to stop and remove Docker Compose services
+# Function to stop services
 stop_services() {
     docker-compose down --volumes
+    echo "Services stopped and volumes removed."
 }
 
 # Function to uninstall services
@@ -391,18 +377,24 @@ uninstall_services() {
     echo "All services and data have been removed."
 }
 
-# Command-line argument handling
+# Main execution
 case "$1" in
     install)
         if [ "$(is_container_running 'postgres')" == "true" ]; then
             echo "Services are already running. Use 'update' to make changes or 'uninstall' to remove them."
-            exit 0
+            exit 1
         fi
+        generate_jupyterhub_config
+        generate_docker_compose
+        generate_nginx_conf
         start_services
         echo "Infrastructure setup complete. Visit your server's IP address to access the services."
         ;;
     update)
-        start_services
+        generate_jupyterhub_config
+        generate_docker_compose
+        generate_nginx_conf
+        docker-compose up -d
         echo "Services updated and running."
         ;;
     uninstall)
