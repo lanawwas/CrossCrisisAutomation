@@ -1,23 +1,23 @@
 version: "1.0"
 services:
   postgres:
-    user: postgres
-    db: analytics
+    user: msna
+    db: msna
     port: 5432
-    secrets:
-      - POSTGRES_PASSWORD
+      #secrets:
+      #- POSTGRES_PASSWORD
   pgadmin:
     default_email: admin@example.com
     port: 80
-    secrets:
-      - PGADMIN_DEFAULT_PASSWORD
-  jupyter:
-    port: 8888
+      #secrets:
+      #- PGADMIN_DEFAULT_PASSWORD
+  jupyterhub:
+    port: 8000
   rstudio:
-    user: rstudio
-    port: 8787
-    secrets:
-      - RSTUDIO_PASSWORD
+    #user: rstudio
+    Base_port: 8787
+      #secrets:
+      #- RSTUDIO_PASSWORD
   airflow:
     port: 8080
   postgrest:
@@ -26,6 +26,18 @@ services:
     db_anon_role: web_anon
   flask:
     port: 5000
+  vscode:
+    port: 8443
   nginx:
     http_port: 80
     https_port: 443
+
+users: 
+  - username: admin
+    password: admin
+  - username: sunhee
+    password: sunhee
+  - username: mario
+    password: mario
+  - username: guillaume
+    password: guillaume

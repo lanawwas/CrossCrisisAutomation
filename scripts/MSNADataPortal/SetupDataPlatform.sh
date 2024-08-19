@@ -2,6 +2,10 @@
 
 set -e  # Exit immediately if a command exits with a non-zero status
 
+# Activate the Python virtual environment 
+
+source /msna/CrossCrisisAutomation/scripts/MSNADataPortal/env/bin/activate
+
 # Load YAML parser function using Python
 parse_yaml() {
    python -c "import yaml,sys; print(yaml.safe_load(sys.stdin.read())$1)" < "$2"
@@ -48,26 +52,49 @@ POSTGRES_DB=$(parse_yaml "['services']['postgres']['db']" $CONFIG_FILE)
 POSTGRES_PORT=$(parse_yaml "['services']['postgres']['port']" $CONFIG_FILE)
 PGADMIN_DEFAULT_EMAIL=$(parse_yaml "['services']['pgadmin']['default_email']" $CONFIG_FILE)
 PGADMIN_PORT=$(parse_yaml "['services']['pgadmin']['port']" $CONFIG_FILE)
-JUPYTER_PORT=$(parse_yaml "['services']['jupyter']['port']" $CONFIG_FILE)
-RSTUDIO_USER=$(parse_yaml "['services']['rstudio']['user']" $CONFIG_FILE)
-RSTUDIO_PORT=$(parse_yaml "['services']['rstudio']['port']" $CONFIG_FILE)
+JUPYTERHUB_PORT=$(parse_yaml "['services']['jupyterhub']['port']" $CONFIG_FILE)
+#RSTUDIO_USER=$(parse_yaml "['services']['rstudio']['user']" $CONFIG_FILE)
+RSTUDIO_BASE_PORT=$(parse_yaml "['services']['rstudio']['base_port']" $CONFIG_FILE)
 AIRFLOW_PORT=$(parse_yaml "['services']['airflow']['port']" $CONFIG_FILE)
 POSTGREST_PORT=$(parse_yaml "['services']['postgrest']['port']" $CONFIG_FILE)
 POSTGREST_DB_SCHEMA=$(parse_yaml "['services']['postgrest']['db_schema']" $CONFIG_FILE)
 POSTGREST_DB_ANON_ROLE=$(parse_yaml "['services']['postgrest']['db_anon_role']" $CONFIG_FILE)
 FLASK_PORT=$(parse_yaml "['services']['flask']['port']" $CONFIG_FILE)
+VSCODE_PORT=$(parse_yaml "['services']['vscode']['port']" $CONFIG_FILE)
 NGINX_HTTP_PORT=$(parse_yaml "['services']['nginx']['http_port']" $CONFIG_FILE)
 NGINX_HTTPS_PORT=$(parse_yaml "['services']['nginx']['https_port']" $CONFIG_FILE)
+USERS=$(parse_yaml "['users']" $CONFIG_FILE)
 
 # Placeholder for secure passwords
 POSTGRES_PASSWORD="your_secure_password"
 PGADMIN_DEFAULT_PASSWORD="your_secure_pgadmin_password"
-RSTUDIO_PASSWORD="your_secure_rstudio_password"
 
 # Create Docker secrets if they don't already exist
 create_docker_secret "POSTGRES_PASSWORD" "${POSTGRES_PASSWORD}"
 create_docker_secret "PGADMIN_DEFAULT_PASSWORD" "${PGADMIN_DEFAULT_PASSWORD}"
-create_docker_secret "RSTUDIO_PASSWORD" "${RSTUDIO_PASSWORD}"
+#create_docker_secret "RSTUDIO_PASSWORD" "${RSTUDIO_PASSWORD}"
+
+# JupyterHub Configuration 
+ generate_jupyterhub_config() {
+	 mkdir -p jupyterhub
+	 
+	 cat <<EOF > jupyterhub/jupyterhub_config.py 
+c = get_config()
+
+# JupyterHub Configuration 
+c.JupyterHub.spawner_class = 'dockerspawner.DockerSpawner' 
+c.DockerSpawner.image = 'jupyter/base-notebook:latest' 
+c.JupyterHub_hub_ip = 'jupyterhub'
+c.JupyterHub.port = ${JUPYTERHUB_PORT}
+c.JupyterHub.bind_url = 'http://:8000/'
+
+# Predefined users
+c.Authenticator.allowed_users = set([${USERS}])
+EOF
+}
+
+# Generate JupyterHub configuration 
+generate_jupyterhub_config
 
 # Docker Compose configuration
 generate_docker_compose() {
@@ -81,8 +108,8 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_DB: ${POSTGRES_DB}
-    secrets:
-      - POSTGRES_PASSWORD
+    #secrets:
+    #  - POSTGRES_PASSWORD
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
     ports:
@@ -95,8 +122,8 @@ services:
     container_name: pgadmin
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
-    secrets:
-      - PGADMIN_DEFAULT_PASSWORD
+    #secrets:
+    #  - PGADMIN_DEFAULT_PASSWORD
     ports:
       - "${PGADMIN_PORT}:80"
     depends_on:
@@ -104,14 +131,13 @@ services:
     networks:
       - app-network
 
-  jupyter:
-    image: jupyter/datascience-notebook
-    container_name: jupyter
+  jupyterhub:
+    image: jupyterhub/jupyterhub:latest
+    container_name: jupyterhub
     volumes:
-      - ./notebooks:/home/jovyan/work
-      - ./datasets:/home/jovyan/datasets
+      - ./jupyterhub:/srv/jupyterhub
     ports:
-      - "${JUPYTER_PORT}:8888"
+      - "${JUPYTER_PORT}:8000"
     networks:
       - app-network
 
@@ -158,6 +184,16 @@ services:
     networks:
       - app-network
 
+  vscode
+    image: codercom/code-server:latest
+    container_name: vscode
+    environment: 
+ 	PASSWORD: test
+    volumes: 
+	- "${VSCODE_PORT}:8443"
+    networks: 
+	-app-network
+
   flask:
     image: flask_app_image  # Placeholder; replace with actual Docker image
     container_name: flask
@@ -177,8 +213,8 @@ services:
       - "${NGINX_HTTP_PORT}:80"
       - "${NGINX_HTTPS_PORT}:443"
     depends_on:
-      - jupyter
-      - rstudio
+      - jupyterhub
+      - vscode
       - airflow
       - postgrest
       - flask
@@ -189,14 +225,34 @@ networks:
   app-network:
     driver: bridge
 
-secrets:
-  POSTGRES_PASSWORD:
-    external: true
-  PGADMIN_DEFAULT_PASSWORD:
-    external: true
-  RSTUDIO_PASSWORD:
-    external: true
+#secrets:
+#  POSTGRES_PASSWORD:
+#    external: true
+#  PGADMIN_DEFAULT_PASSWORD:
+#    external: true
+#  RSTUDIO_PASSWORD:
+#    external: true
 EOF
+
+# Add Rstudio services
+  port_offest=0 
+  for user in $(parse_yaml "['users']" $CONFIG_FILE); do 
+    cat << EOF >> docker-compose.yml 
+  rstudio_${user}:
+    image: rocker/rstudio:latest
+    container_name: rstudio_${user}
+    enviroment: 
+	USER: ${user} 
+    ports: 
+	- "$((RSTUDIO_BASE_PORT + port_offset)):8787"
+    depends_on: 
+	- postgres
+    networks: 
+	- app-network 
+EOF
+    port_offset=$((port_offset +1))
+done 
+
 }
 
 # Generate Docker Compose file
