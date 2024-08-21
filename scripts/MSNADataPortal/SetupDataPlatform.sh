@@ -77,6 +77,7 @@ create_docker_secret "PGADMIN_DEFAULT_PASSWORD" "${PGADMIN_DEFAULT_PASSWORD}"
 #create_docker_secret "RSTUDIO_PASSWORD" "${RSTUDIO_PASSWORD}"
 
 # Generate configurations
+# Generate configurations
 generate_jupyterhub_config() {
     mkdir -p jupyterhub
     cat << EOF > jupyterhub/jupyterhub_config.py
@@ -88,10 +89,18 @@ c.DockerSpawner.image = 'jupyter/base-notebook:latest'
 c.JupyterHub.hub_ip = 'jupyterhub'
 c.JupyterHub.port = ${JUPYTERHUB_PORT}
 c.JupyterHub.bind_url = 'http://:8000/'
-c.Authenticator.allowed_users = set([user.split(':')[0] for user in ${USERS})
 
+# Predefined users
+c.Authenticator.allowed_users = set()
 EOF
+
+    # Add allowed users to JupyterHub config
+    echo "$USERS" | while read -r user_entry; do
+        username=$(echo "$user_entry" | cut -d':' -f1)
+        echo "c.Authenticator.allowed_users.add('${username}')" >> jupyterhub/jupyterhub_config.py
+    done
 }
+
 
 # Docker Compose configuration
 generate_docker_compose() {
