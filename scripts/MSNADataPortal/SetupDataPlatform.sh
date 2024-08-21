@@ -5,25 +5,12 @@ set -euo pipefail
 # Load environment variables
 #source .env
 
-# Activate the Python virtual environment 
-
+# Activate the Python virtual environment
 source /msna/CrossCrisisAutomation/scripts/MSNADataPortal/env/bin/activate
 
 # Load YAML parser function using Python
 parse_yaml() {
-    python -c "
-import yaml, sys, json
-try:
-    config = yaml.safe_load(sys.stdin.read())
-    result = eval('config' + '$1')
-    if isinstance(result, list):
-        print(json.dumps(result))
-    else:
-        print(result)
-except Exception as e:
-    print(f'Error: {str(e)}', file=sys.stderr)
-    sys.exit(1)
-" < "$2"
+   python -c "import yaml,sys; print(yaml.safe_load(sys.stdin.read())$1)" < "$2"
 }
 
 # Configuration
@@ -61,24 +48,24 @@ create_docker_secret() {
 }
 
 # Load configuration from YAML file
-POSTGRES_USER=$(parse_yaml "['services']['postgres']['user']" $CONFIG_FILE)
-POSTGRES_DB=$(parse_yaml "['services']['postgres']['db']" $CONFIG_FILE)
-POSTGRES_PORT=$(parse_yaml "['services']['postgres']['port']" $CONFIG_FILE)
-PGADMIN_DEFAULT_EMAIL=$(parse_yaml "['services']['pgadmin']['default_email']" $CONFIG_FILE)
-PGADMIN_PORT=$(parse_yaml "['services']['pgadmin']['port']" $CONFIG_FILE)
-JUPYTERHUB_PORT=$(parse_yaml "['services']['jupyterhub']['port']" $CONFIG_FILE)
-RSTUDIO_BASE_PORT=$(parse_yaml "['services']['rstudio']['base_port']" $CONFIG_FILE)
-AIRFLOW_PORT=$(parse_yaml "['services']['airflow']['port']" $CONFIG_FILE)
-POSTGREST_PORT=$(parse_yaml "['services']['postgrest']['port']" $CONFIG_FILE)
-POSTGREST_DB_SCHEMA=$(parse_yaml "['services']['postgrest']['db_schema']" $CONFIG_FILE)
-POSTGREST_DB_ANON_ROLE=$(parse_yaml "['services']['postgrest']['db_anon_role']" $CONFIG_FILE)
-FLASK_PORT=$(parse_yaml "['services']['flask']['port']" $CONFIG_FILE)
-VSCODE_PORT=$(parse_yaml "['services']['vscode']['port']" $CONFIG_FILE)
-NGINX_HTTP_PORT=$(parse_yaml "['services']['nginx']['http_port']" $CONFIG_FILE)
-NGINX_HTTPS_PORT=$(parse_yaml "['services']['nginx']['https_port']" $CONFIG_FILE)
+POSTGRES_USER=$(parse_yaml "['services']['postgres']['user']" "$CONFIG_FILE")
+POSTGRES_DB=$(parse_yaml "['services']['postgres']['db']" "$CONFIG_FILE")
+POSTGRES_PORT=$(parse_yaml "['services']['postgres']['port']" "$CONFIG_FILE")
+PGADMIN_DEFAULT_EMAIL=$(parse_yaml "['services']['pgadmin']['default_email']" "$CONFIG_FILE")
+PGADMIN_PORT=$(parse_yaml "['services']['pgadmin']['port']" "$CONFIG_FILE")
+JUPYTERHUB_PORT=$(parse_yaml "['services']['jupyterhub']['port']" "$CONFIG_FILE")
+RSTUDIO_BASE_PORT=$(parse_yaml "['services']['rstudio']['base_port']" "$CONFIG_FILE")
+AIRFLOW_PORT=$(parse_yaml "['services']['airflow']['port']" "$CONFIG_FILE")
+POSTGREST_PORT=$(parse_yaml "['services']['postgrest']['port']" "$CONFIG_FILE")
+POSTGREST_DB_SCHEMA=$(parse_yaml "['services']['postgrest']['db_schema']" "$CONFIG_FILE")
+POSTGREST_DB_ANON_ROLE=$(parse_yaml "['services']['postgrest']['db_anon_role']" "$CONFIG_FILE")
+FLASK_PORT=$(parse_yaml "['services']['flask']['port']" "$CONFIG_FILE")
+VSCODE_PORT=$(parse_yaml "['services']['vscode']['port']" "$CONFIG_FILE")
+NGINX_HTTP_PORT=$(parse_yaml "['services']['nginx']['http_port']" "$CONFIG_FILE")
+NGINX_HTTPS_PORT=$(parse_yaml "['services']['nginx']['https_port']" "$CONFIG_FILE")
 
-# Load users with their passwords
-USERS=$(parse_yaml "['users']" $CONFIG_FILE)
+# Load users with their passwords from YAML file
+USERS=$(parse_yaml "['users']" "$CONFIG_FILE")
 
 # Placeholder for secure passwords
 POSTGRES_PASSWORD="your_secure_password"
@@ -103,7 +90,7 @@ c.JupyterHub.port = ${JUPYTERHUB_PORT}
 c.JupyterHub.bind_url = 'http://:8000/'
 
 # Predefined users
-c.Authenticator.allowed_users = set([$(echo ${USERS} | sed 's/:[^ ]*//g')])
+c.Authenticator.allowed_users = set($(echo "$USERS" | jq -r '.[].split(":")[0]'))
 EOF
 }
 
@@ -278,50 +265,34 @@ http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
     log_format main '\$remote_addr - \$remote_user [\$time_local] "\$request" '
-                    '\$status \$body_bytes_sent "\$http_referer" '
-                    '"\$http_user_agent" "\$http_x_forwarded_for"';
+                      '\$status \$body_bytes_sent "\$http_referer" '
+                      '"\$http_user_agent" "\$http_x_forwarded_for"';
     access_log /var/log/nginx/access.log main;
     sendfile on;
     keepalive_timeout 65;
 
     server {
-        listen 80;
+        listen ${NGINX_HTTP_PORT};
         server_name localhost;
 
-        location / {
-            proxy_pass http://flask:5000;
+        location /jupyterhub/ {
+            proxy_pass http://jupyterhub:8000/;
             proxy_set_header Host \$host;
             proxy_set_header X-Real-IP \$remote_addr;
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto \$scheme;
         }
 
-        location /jupyterhub {
-            proxy_pass http://jupyterhub:8000;
+        location /rstudio/ {
+            proxy_pass http://rstudio:8787/;
             proxy_set_header Host \$host;
             proxy_set_header X-Real-IP \$remote_addr;
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto \$scheme;
         }
 
-        location /rstudio {
-            proxy_pass http://rstudio:8787;
-            proxy_set_header Host \$host;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto \$scheme;
-        }
-
-        location /airflow {
-            proxy_pass http://airflow:8080;
-            proxy_set_header Host \$host;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto \$scheme;
-        }
-
-        location /api {
-            proxy_pass http://postgrest:3000;
+        location /vscode/ {
+            proxy_pass http://vscode:8443/;
             proxy_set_header Host \$host;
             proxy_set_header X-Real-IP \$remote_addr;
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -332,45 +303,7 @@ http {
 EOF
 }
 
-# Generate NGINX configuration file
-generate_nginx_conf
-
-# Flask app Docker setup
-generate_flask_app() {
-mkdir -p flask_app
-
-cat <<EOF > flask_app/Dockerfile
-FROM python:3.8-slim
-
-WORKDIR /app
-COPY requirements.txt requirements.txt
-RUN pip install -r requirements.txt
-COPY . .
-
-CMD ["python", "app.py"]
-EOF
-
-cat <<EOF > flask_app/requirements.txt
-Flask==2.0.2
-EOF
-
-cat <<EOF > flask_app/app.py
-from flask import Flask
-app = Flask(__name__)
-
-@app.route('/')
-def hello_world():
-    return 'Hello, World!'
-
-if __name__ == "__main__":
-    app.run(host='0.0.0.0')
-EOF
-}
-
-# Generate Flask app files
-generate_flask_app
-
-# Function to start the Docker Compose services
+# Create and start Docker containers using Docker Compose
 start_services() {
     docker-compose up -d
     echo "Services started successfully."

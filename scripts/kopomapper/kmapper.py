@@ -82,6 +82,7 @@ def preprocess_text(text):
     if pd.isna(text):
         return ""
     text = str(text).lower()
+    text = re.sub(r'^[a-z0-9_]+_', '', text)  # Remove prefix patterns like "A_2_" which were not used in the standard template
     text = re.sub(r'[^\w\s]', '', text)  # Remove punctuation
     text = re.sub(r'[_\s]+', ' ', text)  # Replace underscores and multiple spaces with a single space
     return text.strip() # Remove leading/trailing spaces
@@ -224,6 +225,7 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         'label_match': None
                     })
             else:
+                # Regular comparison when name matches
                 for col in SURVEY_COLUMNS_TO_COMPARE:
                     if col not in std_row or col not in country_row.iloc[0]:
                         continue  # Skip this column if it's not in both standard and country data
