@@ -10,7 +10,7 @@ source /msna/CrossCrisisAutomation/scripts/MSNADataPortal/env/bin/activate
 
 # Load YAML parser function using Python
 parse_yaml() {
-   python -c "import yaml,sys; print(yaml.safe_load(sys.stdin.read())$1)" < "$2"
+    python -c "import yaml,sys; print(yaml.safe_load(sys.stdin.read())$1)" < "$2"
 }
 
 # Configuration
@@ -82,7 +82,7 @@ generate_jupyterhub_config() {
     cat << EOF > jupyterhub/jupyterhub_config.py
 c = get_config()
 
-# JupyterHub Configuration 
+# JupyterHub Configuration
 c.JupyterHub.spawner_class = 'dockerspawner.DockerSpawner'
 c.DockerSpawner.image = 'jupyter/base-notebook:latest'
 c.JupyterHub.hub_ip = 'jupyterhub'
@@ -98,6 +98,7 @@ EOF
 generate_docker_compose() {
     cat << EOF > docker-compose.yml
 version: '3.8'
+
 services:
   postgres:
     image: postgres:13
@@ -118,6 +119,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
   pgadmin:
     image: dpage/pgadmin4
     container_name: pgadmin
@@ -184,10 +186,10 @@ services:
       - app-network
 
   flask:
-    image: flask_app_image  # Placeholder; replace with actual Docker image
+    image: flask_app_image # Placeholder; replace with actual Docker image
     container_name: flask
     build:
-      context: ./flask_app  # Directory containing Flask app Dockerfile
+      context: ./flask_app # Directory containing Flask app Dockerfile
     ports:
       - "${FLASK_PORT}:5000"
     networks:
@@ -223,12 +225,12 @@ networks:
 #    external: true
 EOF
 
-# Add RStudio services
-local port_offset=0
-echo "$USERS" | jq -c '.[]' | while read -r user_entry; do
-    username=$(echo "$user_entry" | cut -d':' -f1)
-    password=$(echo "$user_entry" | cut -d':' -f2)
-    cat << EOF >> docker-compose.yml
+    # Add RStudio services
+    local port_offset=0
+    echo "$USERS" | jq -c '.[]' | while read -r user_entry; do
+        username=$(echo "$user_entry" | cut -d':' -f1)
+        password=$(echo "$user_entry" | cut -d':' -f2)
+        cat << EOF >> docker-compose.yml
   rstudio_${username}:
     image: rocker/rstudio:latest
     container_name: rstudio_${username}
@@ -242,11 +244,9 @@ echo "$USERS" | jq -c '.[]' | while read -r user_entry; do
     networks:
       - app-network
 EOF
-    port_offset=$((port_offset + 1))
-done
-
-# Generate Docker Compose file
-generate_docker_compose
+        port_offset=$((port_offset + 1))
+    done
+}
 
 # NGINX configuration
 generate_nginx_conf() {
@@ -265,8 +265,8 @@ http {
     include /etc/nginx/mime.types;
     default_type application/octet-stream;
     log_format main '\$remote_addr - \$remote_user [\$time_local] "\$request" '
-                      '\$status \$body_bytes_sent "\$http_referer" '
-                      '"\$http_user_agent" "\$http_x_forwarded_for"';
+                    '\$status \$body_bytes_sent "\$http_referer" '
+                    '"\$http_user_agent" "\$http_x_forwarded_for"';
     access_log /var/log/nginx/access.log main;
     sendfile on;
     keepalive_timeout 65;
