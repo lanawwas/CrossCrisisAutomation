@@ -88,9 +88,8 @@ c.DockerSpawner.image = 'jupyter/base-notebook:latest'
 c.JupyterHub.hub_ip = 'jupyterhub'
 c.JupyterHub.port = ${JUPYTERHUB_PORT}
 c.JupyterHub.bind_url = 'http://:8000/'
+c.Authenticator.allowed_users = set([user.split(':')[0] for user in ${USERS})
 
-# Predefined users
-c.Authenticator.allowed_users = set($(echo "$USERS" | jq -r '.[].split(":")[0]'))
 EOF
 }
 
@@ -225,27 +224,31 @@ networks:
 #    external: true
 EOF
 
-    # Add RStudio services
-    local port_offset=0
-    echo "$USERS" | jq -c '.[]' | while read -r user_entry; do
+# Add RStudio services
+local port_offset=0
+echo "$USERS" | while read -r user_entry; do
+    if [[ "$user_entry" == *:* ]]; then
         username=$(echo "$user_entry" | cut -d':' -f1)
         password=$(echo "$user_entry" | cut -d':' -f2)
         cat << EOF >> docker-compose.yml
   rstudio_${username}:
-    image: rocker/rstudio:latest
-    container_name: rstudio_${username}
-    environment:
-      USER: ${username}
-      PASSWORD: ${password}
-    ports:
-      - "$((RSTUDIO_BASE_PORT + port_offset)):8787"
-    depends_on:
-      - postgres
-    networks:
-      - app-network
+     image: rocker/rstudio:latest
+     container_name: rstudio_${username}
+     environment:
+       USER: ${username}
+       PASSWORD: ${password}
+     ports:
+       - "$((RSTUDIO_BASE_PORT + port_offset)):8787"
+     depends_on:
+       - postgres
+     networks:
+       - app-network
 EOF
         port_offset=$((port_offset + 1))
-    done
+     else
+        echo "Warning: Invalid user entry: $user_entry" >&2
+     fi
+  done
 }
 
 # NGINX configuration
