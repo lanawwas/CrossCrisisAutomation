@@ -10,7 +10,26 @@ source ./env/bin/activate
 
 # Load YAML parser function using Python
 parse_yaml() {
-   python3 -c "import yaml, sys; data=yaml.safe_load(sys.stdin.read()); print(data$1)" < "$2"
+   python3 -c "
+import yaml
+import sys
+def get_value(data, keys):
+    for key in keys:
+        data = data.get(key, None)
+        if data is None:
+            return None
+    return data
+
+data = yaml.safe_load(sys.stdin.read())
+keys = \"$1\".strip('[]').split('][')
+value = get_value(data, keys)
+if isinstance(value, str):
+    print(value)
+elif isinstance(value, list):
+    print(' '.join(value))
+else:
+    print('')  # Return empty string if None or unhandled type
+" < "$2"
 }
 
 # Configuration
@@ -90,7 +109,7 @@ c.JupyterHub.port = ${JUPYTERHUB_PORT}
 c.JupyterHub.bind_url = 'http://:8000/'
 
 # Predefined users
-c.Authenticator.allowed_users = set($(echo "$USERS" | jq -r '.[].split(":")[0]'))
+c.Authenticator.allowed_users = set($(echo "$USERS" | tr ' ' '\n' | jq -R -s -c 'split("\n")[:-1] | map(split(":")[0])'))
 EOF
 }
 
@@ -118,6 +137,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
   pgadmin:
     image: dpage/pgadmin4
     container_name: pgadmin
