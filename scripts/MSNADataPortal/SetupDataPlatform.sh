@@ -6,11 +6,11 @@ set -euo pipefail
 #source .env
 
 # Activate the Python virtual environment
-source /msna/CrossCrisisAutomation/scripts/MSNADataPortal/env/bin/activate
+source ./env/bin/activate
 
 # Load YAML parser function using Python
 parse_yaml() {
-   python -c "import yaml,sys; print(yaml.safe_load(sys.stdin.read())$1)" < "$2"
+   python3 -c "import yaml, sys; data=yaml.safe_load(sys.stdin.read()); print(data$1)" < "$2"
 }
 
 # Configuration
@@ -40,7 +40,7 @@ is_secret_exist() {
 create_docker_secret() {
     local secret_name=$1
     local secret_value=$2
-    if [ "$(is_secret_exist "${secret_name}")" == "false" ]; then
+    if [ "$(docker secret inspect "${secret_name}" > /dev/null 2>&1 && echo true || echo false)" == "false" ]; then
         echo "${secret_value}" | docker secret create "${secret_name}" -
     else
         echo "Docker secret '${secret_name}' already exists."
@@ -225,7 +225,8 @@ EOF
 
 # Add RStudio services
 local port_offset=0
-echo "$USERS" | jq -r '.[]' | while read -r user_entry; do
+IFS=$'\n'
+for user_entry in $(echo "$USERS" | jq -r '.[]'); do
     username=$(echo "$user_entry" | cut -d':' -f1)
     password=$(echo "$user_entry" | cut -d':' -f2)
     cat << EOF >> docker-compose.yml
@@ -244,6 +245,7 @@ echo "$USERS" | jq -r '.[]' | while read -r user_entry; do
 EOF
     port_offset=$((port_offset + 1))
 done
+unset IFS
 }
 
 # Generate Docker Compose file
