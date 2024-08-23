@@ -390,8 +390,8 @@ def generate_discrepancy_report(discrepancies, output_directory, verbose: bool):
         country_df['country'] = country
         
         # Save individual country report
-        country_report_path = os.path.join(output_directory, f"{country}_discrepancy_report.xlsx")
-        country_df.to_excel(country_report_path, index=False)
+        country_report_path = os.path.join(output_directory, f"{country}_discrepancy_report.csv")
+        country_df.to_csv(country_report_path, index=False)
         if verbose:
             logging.info(f"Generated report for {country}: {country_report_path}")
         
@@ -399,8 +399,8 @@ def generate_discrepancy_report(discrepancies, output_directory, verbose: bool):
     
     # Combine into master report
     master_df = pd.concat(master_report, ignore_index=True)
-    master_report_path = os.path.join(output_directory, "master_discrepancy_report.xlsx")
-    master_df.to_excel(master_report_path, index=False)
+    master_report_path = os.path.join(output_directory, "master_discrepancy_report.csv")
+    master_df.to_csv(master_report_path, index=False)
     
     if verbose:
         logging.info(f"Generated master report: {master_report_path}")
