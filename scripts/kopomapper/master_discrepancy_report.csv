@@ -1,8 +1,8 @@
 ﻿tab,row,sector,name,column,standard_value,country_value,matched,usability,usabililty_justification,approximate_match,best_match,token_match,label_match,issue,list_name,country
 survey,2,edu,test,name,audit,audit,matched,"usable, notUsable","customRules, direct, note",,,,,,,BFA
 survey,2,edu,test,type,audit,audit,matched,,,,,,,,,BFA
-survey,2,,audit,calculation,,,test,,,,,,,,,BFA
-survey,2,,audit,relevant,,,test,,,,,,,,,BFA
+survey,2,,audit,calculation,,,matched,,,,,,,,,BFA
+survey,2,,audit,relevant,,,matched,,,,,,,,,BFA
 survey,2,,audit,constraint,,,test,,,,,,,,,BFA
 survey,3,,test,name,start,start,matched,,,,,,,,,BFA
 survey,3,,start,type,start,start,matched,,,,,,,,,BFA
