@@ -3,7 +3,7 @@ survey,2,edu,test,name,audit,audit,matched,"usable, notUsable","customRules, dir
 survey,2,edu,test,type,audit,audit,matched,,,,,,,,,BFA
 survey,2,,audit,calculation,,,matched,,,,,,,,,BFA
 survey,2,,audit,relevant,,,matched,,,,,,,,,BFA
-survey,2,,audit,constraint,,,test,,,,,,,,,BFA
+survey,2,,audit,constraint,,,matched,,,,,,,,,BFA
 survey,3,,test,name,start,start,matched,,,,,,,,,BFA
 survey,3,,start,type,start,start,matched,,,,,,,,,BFA
 survey,3,,start,calculation,,,matched,,,,,,,,,BFA
