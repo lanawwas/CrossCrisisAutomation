@@ -222,7 +222,9 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         'approximate_match': None,
                         'best_match': None,
                         'token_match': None,
-                        'label_match': None
+                        'label_match': None,
+                        'usability': 'not usable',
+                        'note': None
                     })
             else:
                 # Regular comparison when name matches
@@ -281,7 +283,9 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         'approximate_match': approx_match,
                         'best_match': best_match,
                         'token_match': token_match,
-                        'label_match': label_match
+                        'label_match': label_match, 
+                        'usability': 'usable' if match_status == 'matched' else 'not usable',
+                        'note': 'direct' if match_status == 'matched' else ''
                     })
         
         # Compare choices tab
@@ -303,7 +307,9 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         'approximate_match': None,
                         'best_match': None,
                         'token_match': None,
-                        'label_match': None
+                        'label_match': None,
+                        'usability': 'not usable',
+                        'note': None
                     })
             else:
                 for col in CHOICES_COLUMNS_TO_COMPARE:
@@ -362,7 +368,9 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         'approximate_match': approx_match,
                         'best_match': best_match,
                         'token_match': token_match,
-                        'label_match': label_match
+                        'label_match': label_match,
+                        'usability': 'usable' if match_status == 'matched' else 'not usable',
+                        'note': 'direct' if match_status == 'matched' else ''
                     })
         
         if country_discrepancies:
@@ -378,7 +386,7 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
     
     return discrepancies
 
-def generate_discrepancy_report(discrepancies, output_directory, verbose: bool):
+def generate_discrepancy_report(discrepancies, output_directory, verbose: bool, append: bool):
     os.makedirs(output_directory, exist_ok=True)
     master_report = []
     
@@ -389,11 +397,33 @@ def generate_discrepancy_report(discrepancies, output_directory, verbose: bool):
         country_df = pd.DataFrame(country_discrepancies)
         country_df['country'] = country
         
-        # Save individual country report
         country_report_path = os.path.join(output_directory, f"{country}_discrepancy_report.csv")
-        country_df.to_csv(country_report_path, index=False)
-        if verbose:
-            logging.info(f"Generated report for {country}: {country_report_path}")
+        
+        if append and os.path.exists(country_report_path):
+            existing_report = pd.read_csv(country_report_path)
+            
+            # Handle survey tab
+            survey_new_report = pd.concat([
+                existing_report[existing_report['tab'] == 'survey'], 
+                country_df[country_df['tab'] == 'survey']
+            ]).drop_duplicates(subset=['name', 'column', 'row', 'matched'], keep='first')
+            
+            # Handle choices tab
+            choices_new_report = pd.concat([
+                existing_report[existing_report['tab'] == 'choices'], 
+                country_df[country_df['tab'] == 'choices']
+            ]).drop_duplicates(subset=['row', 'column', 'matched', 'list_name'], keep='first')
+            
+            # Combine the two reports
+            new_report = pd.concat([survey_new_report, choices_new_report])
+            
+            new_report.to_csv(country_report_path, index=False)
+            if verbose:
+                logging.info(f"Appended new discrepancies to {country_report_path}")
+        else:
+            country_df.to_csv(country_report_path, index=False)
+            if verbose:
+                logging.info(f"Generated new report for {country}: {country_report_path}")
         
         master_report.append(country_df)
     
@@ -413,7 +443,8 @@ def main():
     parser.add_argument("output_directory", help="Directory to save discrepancy reports.")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging.")
     parser.add_argument("--threshold", type=int, default=90, help="Threshold for approximate matching (default: 90).")
-    
+    parser.add_argument("--append", action="store_true", help="Append to existing reports instead of overwriting.")
+
     args = parser.parse_args()
     
     # 1. Input the corresponding Kobo template Ingestion
@@ -428,7 +459,7 @@ def main():
     discrepancies = compare_with_standard(country_data, standard_data, args.verbose, args.threshold)
     
     # 3. Generate Initial Reports
-    generate_discrepancy_report(discrepancies, args.output_directory, args.verbose)
+    generate_discrepancy_report(discrepancies, args.output_directory, args.verbose, args.append)
 
 if __name__ == "__main__":
     main()
