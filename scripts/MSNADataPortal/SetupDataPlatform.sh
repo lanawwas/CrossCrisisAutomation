@@ -19,14 +19,16 @@ def get_value(data, keys):
         if data is None:
             return None
     return data
-
 data = yaml.safe_load(sys.stdin.read())
 keys = \"$1\".strip('[]').split('][')
 value = get_value(data, keys)
 if isinstance(value, str):
     print(value)
 elif isinstance(value, list):
-    print(' '.join(value))
+    print('\n'.join(value))
+elif isinstance(value, dict):
+    for k, v in value.items():
+        print(f'{k}: {v}')
 else:
     print('')  # Return empty string if None or unhandled type
 " < "$2"
@@ -84,7 +86,7 @@ NGINX_HTTP_PORT=$(parse_yaml "['services']['nginx']['http_port']" "$CONFIG_FILE"
 NGINX_HTTPS_PORT=$(parse_yaml "['services']['nginx']['https_port']" "$CONFIG_FILE")
 
 # Load users with their passwords from YAML file
-USERS=$(parse_yaml "['users']" "$CONFIG_FILE")
+USERS=$(parse_yaml "['users']" "$CONFIG_FILE" | sed 's/^- //')
 
 # Placeholder for secure passwords
 POSTGRES_PASSWORD="your_secure_password"
@@ -109,7 +111,7 @@ c.JupyterHub.port = ${JUPYTERHUB_PORT}
 c.JupyterHub.bind_url = 'http://:8000/'
 
 # Predefined users
-c.Authenticator.allowed_users = set($(echo "$USERS" | tr ' ' '\n' | jq -R -s -c 'split("\n")[:-1] | map(split(":")[0])'))
+c.Authenticator.allowed_users = set([$(echo "$USERS" | cut -d':' -f1 | tr '\n' ',' | sed 's/,$//')])
 EOF
 }
 
@@ -167,7 +169,9 @@ services:
     container_name: airflow
     environment:
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:@postgres:${POSTGRES_PORT}/${POSTGRES_DB}
     volumes:
       - ./airflow/dags:/usr/local/airflow/dags
       - ./airflow/logs:/usr/local/airflow/logs
@@ -176,9 +180,16 @@ services:
       - "${AIRFLOW_PORT}:8080"
     depends_on:
       - postgres
+      - redis
     networks:
       - app-network
-
+  
+  redis:
+    image: redis:latest
+    container_name: redis
+    networks:
+      - app-network
+      
   postgrest:
     image: postgrest/postgrest
     container_name: postgrest
@@ -243,29 +254,35 @@ networks:
 #    external: true
 EOF
 
+# Add RStudio shared volume between users
+cat << EOF >> docker-compose.yml
+volumes:
+  rstudio_shared_data:  # Define a named volume for shared data
+
+EOF
+
 # Add RStudio services
-local port_offset=0
-IFS=$'\n'
-for user_entry in $(echo "$USERS" | jq -r '.[]'); do
-    username=$(echo "$user_entry" | cut -d':' -f1)
-    password=$(echo "$user_entry" | cut -d':' -f2)
+
+while IFS=: read -r username password; do
     cat << EOF >> docker-compose.yml
   rstudio_${username}:
     image: rocker/rstudio:latest
     container_name: rstudio_${username}
     environment:
-      USER: ${username}
-      PASSWORD: ${password}
+      - USER=${username}
+      - PASSWORD=${password}
     ports:
-      - "$((RSTUDIO_BASE_PORT + port_offset)):8787"
+      - "${RSTUDIO_BASE_PORT}:8787"
+    volumes:
+      - rstudio_shared_data:/home/rstudio/shared  # Mount the shared volume
+      - ./rstudio-data/${username}:/home/rstudio/${username}  # User-specific data
     depends_on:
       - postgres
     networks:
       - app-network
 EOF
-    port_offset=$((port_offset + 1))
-done
-unset IFS
+    RSTUDIO_BASE_PORT=$((RSTUDIO_BASE_PORT + 1))
+done <<< "$USERS"
 }
 
 # Generate Docker Compose file
@@ -306,14 +323,6 @@ http {
             proxy_set_header X-Forwarded-Proto \$scheme;
         }
 
-        location /rstudio/ {
-            proxy_pass http://rstudio:8787/;
-            proxy_set_header Host \$host;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto \$scheme;
-        }
-
         location /vscode/ {
             proxy_pass http://vscode:8443/;
             proxy_set_header Host \$host;
@@ -321,9 +330,43 @@ http {
             proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto \$scheme;
         }
-    }
-}
+
+        location /airflow/ {
+            proxy_pass http://airflow:8080/;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+        }
+
+        location /flask/ {
+            proxy_pass http://flask:5000/;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+        }
+
 EOF
+
+    # Add RStudio locations for each user
+    while IFS=: read -r username password; do
+        cat << EOF >> nginx/nginx.conf
+        location /rstudio/${username}/ {
+            proxy_pass http://rstudio_${username}:8787/;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+        }
+EOF
+    done <<< "$USERS"
+
+    # Close the server block
+    echo "    }" >> nginx/nginx.conf
+
+    # Close the http block
+    echo "}" >> nginx/nginx.conf
 }
 
 # Create and start Docker containers using Docker Compose
