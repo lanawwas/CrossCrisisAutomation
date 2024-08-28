@@ -13,7 +13,7 @@ import re
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Define the columns we want to compare in the survey tab
-SURVEY_COLUMNS_TO_COMPARE = ['name', 'type', 'calculation', 'relevant', 'constraint', 'label::English', 'label::French']
+SURVEY_COLUMNS_TO_COMPARE = ['name', 'type', 'theme', 'calculation', 'relevant', 'constraint', 'label::English', 'label::French']
 # Define the columns we want to compare in the choices tab
 CHOICES_COLUMNS_TO_COMPARE = ['name', 'list_name']
 # Define the special types
@@ -216,6 +216,7 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                     country_discrepancies.append({
                         'tab': 'survey',
                         'row': idx + 2,  # +2 because Excel rows start at 1 and have a header
+                        'sector': std_row.get('theme', ''),
                         'name': std_name,
                         'issue': 'Missing in country survey',
                         'matched': 'not matched',
@@ -275,6 +276,7 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                     country_discrepancies.append({
                         'tab': 'survey',
                         'row': idx + 2,
+                        'sector': std_row.get('theme', ''),
                         'name': std_name,
                         'column': col,
                         'standard_value': std_value,
@@ -300,6 +302,7 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                     country_discrepancies.append({
                         'tab': 'choices',
                         'row': idx + 2,
+                        'sector': std_row.get('theme', ''),
                         'name': std_name,
                         'list_name': std_list_name,
                         'issue': 'Missing in country choices',
