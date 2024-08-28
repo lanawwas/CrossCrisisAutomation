@@ -362,87 +362,110 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
         for idx, std_row in standard_choices.iterrows():
             std_name = std_row['name']
             std_list_name = std_row.get('list_name', '')  # Use get() to avoid KeyError if 'list_name' is missing
+            
+            # Try name and list_name matching
             country_row = country_choices[(country_choices['name'] == std_name) & 
-                                          (country_choices['list_name'] == std_list_name)]
+                                        (country_choices['list_name'] == std_list_name)]
             
             if country_row.empty:
-                if not is_empty_or_nan(std_row['name']) and not is_empty_or_nan(std_row['list_name']):  # Only add discrepancy if standard row is not empty
-                    country_discrepancies.append({
-                        'tab': 'choices',
-                        'row': idx + 2,
-                        'sector': std_row.get('theme', ''),
-                        'name': std_name,
-                        'list_name': std_list_name,
-                        'issue': 'Missing in country choices',
-                        'matched': 'not matched',
-                        'approximate_match': None,
-                        'best_match': None,
-                        'token_match': None,
-                        'label_match': None,
-                        'usability': 'not usable',
-                        'note': None
-                    })
+                # Try label matching if name and list_name don't match
+                std_labels = [std_row[label] for label in standard_choices_label_columns if label in std_row.index and not pd.isna(std_row[label])]
+                best_label_match = None
+                best_label_score = 0
+                matched_row_number = 'N/A'
+                matched_name_value = 'N/A'
+                matched_list_name_value = 'N/A'
+                
+                for std_label in std_labels:
+                    for country_idx, country_row in country_choices.iterrows():
+                        country_labels = [country_row[label] for label in country_choices_label_columns if not pd.isna(country_row[label])]
+                        for country_label in country_labels:
+                            label_match, label_score = find_label_match(std_label, [country_label], threshold)
+                            if label_score > best_label_score:
+                                best_label_match = label_match
+                                best_label_score = label_score
+                                matched_row_number = country_idx + 2  # +2 because Excel rows start at 1 and have a header
+                                matched_name_value = country_row.get('name', 'N/A')
+                                matched_list_name_value = country_row.get('list_name', 'N/A')
+                                matched_country_row = country_row
+                
+                if best_label_score >= threshold:
+                    match_status = 'matchedByLabel'
+                    country_row = matched_country_row
+                else:
+                    match_status = 'not matched'
+                    if not is_empty_or_nan(std_row['name']) and not is_empty_or_nan(std_row['list_name']):
+                        country_discrepancies.append({
+                            'tab': 'choices',
+                            'row': idx + 2,
+                            'sector': std_row.get('theme', ''),
+                            'name': std_name,
+                            'list_name': std_list_name,
+                            'issue': 'Missing in country choices',
+                            'matched': 'not matched',
+                            'approximate_match': None,
+                            'best_match': None,
+                            'token_match': None,
+                            'label_match': None,
+                            'usability': 'not usable',
+                            'note': None
+                        })
+                    continue  # Move to next standard row
             else:
-                for col in CHOICES_COLUMNS_TO_COMPARE:
-                    if col not in std_row or col not in country_row.iloc[0]:
-                        continue  # Skip this column if it's not in both standard and country data
-                    
-                    std_value = std_row[col]
-                    country_value = country_row.iloc[0][col]
-                    
-                    if is_empty_or_nan(std_value) and is_empty_or_nan(country_value):
-                        match_status = 'matched'
-                        approx_match = None
+                match_status = 'matched'
+                matched_row_number = country_row.index[0] + 2
+                matched_name_value = country_row.iloc[0].get('name', 'N/A')
+                matched_list_name_value = country_row.iloc[0].get('list_name', 'N/A')
+
+            # Regular comparison for matched rows (either by name/list_name or label)
+            for col in CHOICES_COLUMNS_TO_COMPARE:
+                if col not in std_row or col not in country_row.iloc[0]:
+                    continue  # Skip this column if it's not in both standard and country data
+                
+                std_value = std_row[col]
+                country_value = country_row.iloc[0][col]
+                
+                if is_empty_or_nan(std_value) and is_empty_or_nan(country_value):
+                    column_match_status = 'matched'
+                    approx_match = None
+                    best_match = None
+                    token_match = None
+                elif std_value != country_value:
+                    column_match_status = 'not matched'
+                    approx_match, score = find_approximate_match(std_value, country_choices[col].dropna().unique(), threshold)
+                    if score >= threshold:
                         best_match = None
                         token_match = None
-                        label_match = None
-                    elif std_value != country_value:
-                        match_status = 'not matched'
-                        approx_match, score = find_approximate_match(std_value, country_choices[col].dropna().unique(), threshold)
-                        if score >= threshold:
-                            best_match = None
-                            token_match = None
-                            label_match = None
-                        else:
-                            best_match, best_score = find_best_match(std_value, country_choices[col].dropna().unique())
-                            if best_score >= threshold:
-                                token_match = None
-                                label_match = None
-                            else:
-                                token_match, token_score = find_token_match(std_value, country_choices[col].dropna().unique())
-                                if token_score < threshold:
-                                    if standard_choices_label_columns and country_choices_label_columns:
-                                        std_labels = [std_row[label] for label in standard_choices_label_columns if label in std_row.index]
-                                        country_labels = country_choices[country_choices_label_columns].stack().dropna().unique()
-                                        label_match, label_score = find_label_match(std_labels[0] if std_labels else std_value, country_labels, threshold)
-                                    else:
-                                        label_match = None
-                                else:
-                                    label_match = None
-                        approx_match = approx_match if score >= threshold else None
                     else:
-                        match_status = 'matched'
-                        approx_match = None
-                        best_match = None
-                        token_match = None
-                        label_match = None
-                    
-                    country_discrepancies.append({
-                        'tab': 'choices',
-                        'row': idx + 2,
-                        'name': std_name,
-                        'list_name': std_list_name,
-                        'column': col,
-                        'standard_value': std_value,
-                        'country_value': country_value,
-                        'matched': match_status,
-                        'approximate_match': approx_match,
-                        'best_match': best_match,
-                        'token_match': token_match,
-                        'label_match': label_match,
-                        'usability': 'usable' if match_status == 'matched' else 'not usable',
-                        'note': 'direct' if match_status == 'matched' else ''
-                    })
+                        best_match, best_score = find_best_match(std_value, country_choices[col].dropna().unique())
+                        if best_score >= threshold:
+                            token_match = None
+                        else:
+                            token_match, token_score = find_token_match(std_value, country_choices[col].dropna().unique())
+                    approx_match = approx_match if score >= threshold else None
+                else:
+                    column_match_status = 'matched'
+                    approx_match = None
+                    best_match = None
+                    token_match = None
+                
+                country_discrepancies.append({
+                    'tab': 'choices',
+                    'row': idx + 2,
+                    'name': std_name,
+                    'list_name': std_list_name,
+                    'column': col,
+                    'standard_value': std_value,
+                    'country_value': country_value,
+                    'matched': column_match_status,
+                    'approximate_match': approx_match,
+                    'best_match': best_match,
+                    'token_match': token_match,
+                    'label_match': best_label_match if match_status == 'matchedByLabel' else None,
+                    'usability': 'usable' if column_match_status == 'matched' else 'not usable',
+                    'note': f'{match_status}. Country row: {matched_row_number}, Country name: {matched_name_value}, Country list_name: {matched_list_name_value}'
+                })
+
         
         if country_discrepancies:
             discrepancies[country] = country_discrepancies
