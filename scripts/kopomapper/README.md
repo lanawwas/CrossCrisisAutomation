@@ -6,7 +6,7 @@ Independent Column Comparison:
 
     Each column defined in SURVEY_COLUMNS_TO_COMPARE and CHOICES_COLUMNS_TO_COMPARE is compared independently. Discrepancies are logged for each column separately.
 
-How It Works:
+## How It Works:
 
     Loading Files:
         The script loads the KoboToolbox survey files for each country and the standard template.
@@ -17,25 +17,60 @@ How It Works:
         For the 'choices' tab, it performs a similar comparison based on the 'name' and 'list_name' columns.
     Generating Reports:
         The script generates individual discrepancy reports for each country and a master report combining all discrepancies.
+## Installation
 
-Set Execute Permission:
+- Clone the repo. 
+- create a python virtual enviroment in the directory of the script 
+
+    ```bash
+    python -m venv <nameOfTheVirtualEnviroment> 
+    ```
+
+- activate the created virtual enviroment 
+
+    ```bash
+    source /path/to/the/created/virtual/enviroment/bin/activate 
+    ```
+- OR in case of Windows
+
+    ```bash
+    source /path/to/the/created/virtual/enviroment/Scripts/activate 
+
+- Install requirments.txt in the virtual enviroment 
+
+    ```bash
+    pip install -r requirment.txt
+    ```
+
+### Set Execute Permission:
 To make the script executable, you need to set the execute permission. You can do this using the chmod command in the terminal:
 
-```sh
+```bash
 chmod +x kmapper.py
 ```
-Running the Script
+## Running the Script
 
 You can now run the script in verbose mode or silent mode:
 
-Verbose Mode:
+## Verbose Mode:
 
-```sh
-./kmapper.py tests/CountryKobo/ tests/REACH_2024_MSNA-kobo-tool_draft_v9.xlsx tests/ --verbose
+```bassh
+./kmapper.py <Country_kobo_directory> <standard_template_path.xlsx> <output_directory> --verbose
 ```
-Silent Mode:
 
-```sh
+### Current flags available: 
+
+- kobo_directory : Directory containing Countries KoboToolbox files.
+- standard_template_path  : Path to the standard survey template xlxs.
+- output_directory : Directory to save discrepancy reports
+  
+- **--verbose** : Enable verbose logging.
+- **--threshold** : Threshold as intiger for approximate matching (default: 90).
+- **--append** : Append to existing reports instead of overwriting.
+    
+## Silent Mode:
+
+```bassh
 ./kmapper.py tests/CountryKobo/ tests/REACH_2024_MSNA-kobo-tool_draft_v9.xlsx tests/
 ```
 
