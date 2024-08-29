@@ -5,9 +5,10 @@ import numpy as np
 import os
 import argparse
 import logging
-from fuzzywuzzy import fuzz
-from fuzzywuzzy import process
+from rapidfuzz import fuzz, process
 import re
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+import multiprocessing
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,7 +26,7 @@ def load_kobo_files(directory: str, verbose: bool):
     survey_data = {}
     files_found = 0
     countries_found = set()
-    
+
     for filename in os.listdir(directory):
         if filename.endswith('.xlsx'):
             country_code = filename[:3].upper()  # Extracting the country code
@@ -44,11 +45,11 @@ def load_kobo_files(directory: str, verbose: bool):
             except Exception as e:
                 if verbose:
                     logging.error(f"Error loading {filename}: {e}")
-    
+
     if verbose:
         logging.info(f"Number of files found: {files_found}")
         logging.info(f"Number of countries found: {len(countries_found)}")
-    
+
     return survey_data
 
 def load_standard_template(file_path: str, verbose: bool):
@@ -90,18 +91,18 @@ def preprocess_text(text):
 def find_approximate_match(value, candidates, threshold):
     best_match = None
     highest_score = 0
-    
+
     # Convert value to string if it's not already
     value_str = str(value) if value is not None else ""
-    
+
     for candidate in candidates:
         # Convert candidate to string if it's not already
         candidate_str = str(candidate) if candidate is not None else ""
-        
+
         # Skip empty strings
         if not value_str or not candidate_str:
             continue
-        
+
         score = fuzz.token_set_ratio(value_str, candidate_str)
         if score > highest_score and score >= threshold:
             highest_score = score
@@ -111,236 +112,169 @@ def find_approximate_match(value, candidates, threshold):
 def find_best_match(value, candidates):
     best_match = None
     highest_score = 0
-    
+
     value_str = preprocess_text(value) if not is_empty_or_nan(value) else ""
-    
+
     for candidate in candidates:
         candidate_str = preprocess_text(candidate) if not is_empty_or_nan(candidate) else ""
-        
+
         if not value_str or not candidate_str:
             continue
-        
+
         score = fuzz.partial_ratio(value_str, candidate_str)
         if score > highest_score:
             highest_score = score
             best_match = candidate
-    
+
     return best_match, highest_score
 
 def find_token_match(value, candidates):
     best_match = None
     highest_score = 0
-    
+
     value_str = preprocess_text(value) if not is_empty_or_nan(value) else ""
-    
+
     for candidate in candidates:
         candidate_str = preprocess_text(candidate) if not is_empty_or_nan(candidate) else ""
-        
+
         if not value_str or not candidate_str:
             continue
-        
+
         score = fuzz.token_sort_ratio(value_str, candidate_str)
         if score > highest_score:
             highest_score = score
             best_match = candidate
-    
+
     return best_match, highest_score
 
 def find_label_match(std_value, country_labels, threshold):
     """Find the best label match using multiple techniques."""
     std_value = preprocess_text(std_value)
     country_labels = [preprocess_text(label) for label in country_labels]
-    
+
     # Exact match
     if std_value in country_labels:
         return std_value, 100
-    
-    # Fuzzy ratio
-    best_match, score = process.extractOne(std_value, country_labels, scorer=fuzz.ratio)
-    if score >= threshold:
-        return best_match, score
-    
-    # Token sort ratio (handles word order differences)
-    best_match, score = process.extractOne(std_value, country_labels, scorer=fuzz.token_sort_ratio)
-    if score >= threshold:
-        return best_match, score
-    
-    # Partial ratio (handles substring matches)
-    best_match, score = process.extractOne(std_value, country_labels, scorer=fuzz.partial_ratio)
-    if score >= threshold:
-        return best_match, score
-    
-    # Token set ratio (handles unordered token matches)
-    best_match, score = process.extractOne(std_value, country_labels, scorer=fuzz.token_set_ratio)
-    if score >= threshold:
-        return best_match, score
-    
-    # If no match found above threshold, return the best match found
-    return best_match, score
 
-def compare_with_standard(country_data, standard_data, verbose: bool, threshold: int):
-    discrepancies = {}
+    # Fuzzy ratio
+    result = process.extractOne(std_value, country_labels, scorer=fuzz.ratio)
+    if result and len(result) >= 2:
+        best_match, score = result[0], result[1]
+        if score >= threshold:
+            return best_match, score
+
+    # Token sort ratio (handles word order differences)
+    result = process.extractOne(std_value, country_labels, scorer=fuzz.token_sort_ratio)
+    if result and len(result) >= 2:
+        best_match, score = result[0], result[1]
+        if score >= threshold:
+            return best_match, score
+
+    # Partial ratio (handles substring matches)
+    result = process.extractOne(std_value, country_labels, scorer=fuzz.partial_ratio)
+    if result and len(result) >= 2:
+        best_match, score = result[0], result[1]
+        if score >= threshold:
+            return best_match, score
+
+    # Token set ratio (handles unordered token matches)
+    result = process.extractOne(std_value, country_labels, scorer=fuzz.token_set_ratio)
+    if result and len(result) >= 2:
+        best_match, score = result[0], result[1]
+        if score >= threshold:
+            return best_match, score
+
+    # If no match found above threshold, return the best match found
+    if result and len(result) >= 2:
+        return result[0], result[1]
+    else:
+        return None, 0
+
+def compare_country_with_standard(country, data, standard_data, verbose: bool, threshold: int):
+    country_discrepancies = []
     standard_survey = extract_variables(standard_data['survey'], SURVEY_COLUMNS_TO_COMPARE + LABEL_COLUMNS)
     standard_choices = extract_variables(standard_data['choices'], CHOICES_COLUMNS_TO_COMPARE + LABEL_COLUMNS)
-    
+
     standard_survey_label_columns = get_available_label_columns(standard_survey)
     standard_choices_label_columns = get_available_label_columns(standard_choices)
-    
-    if verbose:
-        logging.info("Comparing country surveys with standard template...")
-    
-    for country, data in country_data.items():
-        country_survey = extract_variables(data['survey'], SURVEY_COLUMNS_TO_COMPARE + LABEL_COLUMNS)
-        country_choices = extract_variables(data['choices'], CHOICES_COLUMNS_TO_COMPARE + LABEL_COLUMNS)
-        
-        country_survey_label_columns = get_available_label_columns(country_survey)
-        country_choices_label_columns = get_available_label_columns(country_choices)
-        
-        country_discrepancies = []
-        
-        if verbose:
-            logging.info(f"Processing country: {country}")
-        
-        # Compare survey tab
-        for idx, std_row in standard_survey.iterrows():
-            std_name = std_row['name']
-            std_type = std_row.get('type', '')  # Use get() to avoid KeyError if 'type' is missing
-            if std_type in SPECIAL_TYPES:
-                # Skip special types for name matching
-                continue
-            
-            # Try name matching
-            country_row = country_survey[country_survey['name'] == std_name]
-            
-            if country_row.empty:
-                # Try label matching if name doesn't match
-                std_labels = [std_row[label] for label in standard_survey_label_columns if label in std_row.index and not pd.isna(std_row[label])]
-                best_label_match = None
-                best_label_score = 0
-                matched_row_number = 'N/A'
-                matched_name_value = 'N/A'
-                
-                for std_label in std_labels:
-                    for country_idx, country_row in country_survey.iterrows():
-                        country_labels = [country_row[label] for label in country_survey_label_columns if not pd.isna(country_row[label])]
-                        for country_label in country_labels:
-                            label_match, label_score = find_label_match(std_label, [country_label], threshold)
-                            if label_score > best_label_score:
-                                best_label_match = label_match
-                                best_label_score = label_score
-                                matched_row_number = country_idx + 2  # +2 because Excel rows start at 1 and have a header
-                                matched_name_value = country_row.get('name', 'N/A')
-                                matched_country_row = country_row
-                
-                if best_label_score >= threshold:
-                    match_status = 'matchedByLabel'
-                    # Run regular comparison for the matched row
-                    for col in SURVEY_COLUMNS_TO_COMPARE:
-                        if col not in std_row or col not in matched_country_row:
-                            continue  # Skip this column if it's not in both standard and country data
-                        
-                        std_value = std_row[col]
-                        country_value = matched_country_row[col]
 
-                        # Check if values are empty or NaN
-                        
-                        if is_empty_or_nan(std_value) and is_empty_or_nan(country_value):
-                            column_match_status = 'matched'
-                            approx_match = None
-                            best_match = None
-                            token_match = None
-                        elif std_value != country_value:
-                            column_match_status = 'not matched'
-                            approx_match, score = find_approximate_match(std_value, country_survey[col].dropna().unique(), threshold)
-                            if score >= threshold:
-                                best_match = None
-                                token_match = None
-                            else:
-                                best_match, best_score = find_best_match(std_value, country_survey[col].dropna().unique())
-                                if best_score >= threshold:
-                                    token_match = None
-                                else:
-                                    token_match, token_score = find_token_match(std_value, country_survey[col].dropna().unique())
-                            approx_match = approx_match if score >= threshold else None
-                        else:
-                            column_match_status = 'matched'
-                            approx_match = None
-                            best_match = None
-                            token_match = None
-                        
-                        country_discrepancies.append({
-                            'tab': 'survey',
-                            'row': idx + 2,
-                            'sector': std_row.get('theme', ''),
-                            'name': std_name,
-                            'column': col,
-                            'standard_value': std_value,
-                            'country_value': country_value,
-                            'matched': column_match_status,
-                            'approximate_match': approx_match,
-                            'best_match': best_match,
-                            'token_match': token_match,
-                            'label_match': best_label_match,
-                            'usability': 'usable' if column_match_status == 'matched' else 'not usable',
-                            'note': f'Matched by label to row {matched_row_number}, name: {matched_name_value}'
-                        })
-                else:
-                    match_status = 'not matched'
-                    country_discrepancies.append({
-                        'tab': 'survey',
-                        'row': idx + 2,  # +2 because Excel rows start at 1 and have a header
-                        'sector': std_row.get('theme', ''),
-                        'name': std_name,
-                        'issue': 'Missing in country survey',
-                        'matched': 'not matched',
-                        'approximate_match': None,
-                        'best_match': None,
-                        'token_match': None,
-                        'label_match': None,
-                        'usability': 'not usable',
-                        'note': None
-                    })
-            else:
-                # Regular comparison when name matches
+    country_survey = extract_variables(data['survey'], SURVEY_COLUMNS_TO_COMPARE + LABEL_COLUMNS)
+    country_choices = extract_variables(data['choices'], CHOICES_COLUMNS_TO_COMPARE + LABEL_COLUMNS)
+
+    country_survey_label_columns = get_available_label_columns(country_survey)
+    country_choices_label_columns = get_available_label_columns(country_choices)
+
+    if verbose:
+        logging.info(f"Processing country: {country}")
+
+    # Compare survey tab
+    for idx, std_row in standard_survey.iterrows():
+        std_name = std_row['name']
+        std_type = std_row.get('type', '')
+        if std_type in SPECIAL_TYPES:
+            continue
+
+        country_row = country_survey[country_survey['name'] == std_name]
+
+        if verbose:
+            logging.info(f"Processing country: {country} Survey variable {std_name}")
+
+
+        if country_row.empty:
+            std_labels = [std_row[label] for label in standard_survey_label_columns if label in std_row.index and not pd.isna(std_row[label])]
+            best_label_match = None
+            best_label_score = 0
+            matched_row_number = 'N/A'
+            matched_name_value = 'N/A'
+
+            for std_label in std_labels:
+                for country_idx, country_row in country_survey.iterrows():
+                    country_labels = [country_row[label] for label in country_survey_label_columns if not pd.isna(country_row[label])]
+                    for country_label in country_labels:
+                        label_match, label_score = find_label_match(std_label, [country_label], threshold)
+                        if label_score > best_label_score:
+                            best_label_match = label_match
+                            best_label_score = label_score
+                            matched_row_number = country_idx + 2
+                            matched_name_value = country_row.get('name', 'N/A')
+                            matched_country_row = country_row
+
+            if best_label_score >= threshold:
+                match_status = 'matchedByLabel'
                 for col in SURVEY_COLUMNS_TO_COMPARE:
-                    if col not in std_row or col not in country_row.iloc[0]:
-                        continue  # Skip this column if it's not in both standard and country data
-                    
+                    if col not in std_row or col not in matched_country_row:
+                        continue
+
                     std_value = std_row[col]
-                    country_value = country_row.iloc[0][col]
-                    
-                    # Get the row number and variable name from the country survey
-                    country_row_number = country_row.index[0] + 2  # +2 because Excel rows start at 1 and have a header
-                    country_variable_name = country_row.iloc[0].get('name', 'N/A')
-                    
+                    country_value = matched_country_row[col]
+
+                    if verbose:
+                        logging.info(f"  {col}: {std_value} vs {country_value}")
+
                     if is_empty_or_nan(std_value) and is_empty_or_nan(country_value):
-                        match_status = 'matched'
+                        column_match_status = 'matched'
                         approx_match = None
                         best_match = None
                         token_match = None
-                        label_match = None
                     elif std_value != country_value:
-                        match_status = 'not matched'
+                        column_match_status = 'not matched'
                         approx_match, score = find_approximate_match(std_value, country_survey[col].dropna().unique(), threshold)
                         if score >= threshold:
                             best_match = None
                             token_match = None
-                            label_match = None
                         else:
                             best_match, best_score = find_best_match(std_value, country_survey[col].dropna().unique())
                             if best_score >= threshold:
                                 token_match = None
-                                label_match = None
                             else:
                                 token_match, token_score = find_token_match(std_value, country_survey[col].dropna().unique())
                         approx_match = approx_match if score >= threshold else None
                     else:
-                        match_status = 'matched'
+                        column_match_status = 'matched'
                         approx_match = None
                         best_match = None
                         token_match = None
-                        label_match = None
-                    
+
                     country_discrepancies.append({
                         'tab': 'survey',
                         'row': idx + 2,
@@ -349,168 +283,268 @@ def compare_with_standard(country_data, standard_data, verbose: bool, threshold:
                         'column': col,
                         'standard_value': std_value,
                         'country_value': country_value,
-                        'matched': match_status,
+                        'matched': column_match_status,
                         'approximate_match': approx_match,
                         'best_match': best_match,
                         'token_match': token_match,
-                        'label_match': label_match,
-                        'usability': 'usable' if match_status == 'matched' else 'not usable',
-                        'note': f'Direct match. Country row: {country_row_number}, Country variable: {country_variable_name}' if match_status == 'matched' else f'Country row: {country_row_number}, Country variable: {country_variable_name}',
+                        'label_match': best_label_match,
+                        'usability': 'usable' if column_match_status == 'matched' else 'not usable',
+                        'note': f'Matched by label to row {matched_row_number}, name: {matched_name_value}'
                     })
-        
-        # Compare choices tab
-        for idx, std_row in standard_choices.iterrows():
-            std_name = std_row['name']
-            std_list_name = std_row.get('list_name', '')  # Use get() to avoid KeyError if 'list_name' is missing
-            
-            # Try name and list_name matching
-            country_row = country_choices[(country_choices['name'] == std_name) & 
-                                        (country_choices['list_name'] == std_list_name)]
-            
-            if country_row.empty:
-                # Try label matching if name and list_name don't match
-                std_labels = [std_row[label] for label in standard_choices_label_columns if label in std_row.index and not pd.isna(std_row[label])]
-                best_label_match = None
-                best_label_score = 0
-                matched_row_number = 'N/A'
-                matched_name_value = 'N/A'
-                matched_list_name_value = 'N/A'
-                
-                for std_label in std_labels:
-                    for country_idx, country_row in country_choices.iterrows():
-                        country_labels = [country_row[label] for label in country_choices_label_columns if not pd.isna(country_row[label])]
-                        for country_label in country_labels:
-                            label_match, label_score = find_label_match(std_label, [country_label], threshold)
-                            if label_score > best_label_score:
-                                best_label_match = label_match
-                                best_label_score = label_score
-                                matched_row_number = country_idx + 2  # +2 because Excel rows start at 1 and have a header
-                                matched_name_value = country_row.get('name', 'N/A')
-                                matched_list_name_value = country_row.get('list_name', 'N/A')
-                                matched_country_row = country_row
-                
-                if best_label_score >= threshold:
-                    match_status = 'matchedByLabel'
-                    country_row = matched_country_row
-                else:
-                    match_status = 'not matched'
-                    if not is_empty_or_nan(std_row['name']) and not is_empty_or_nan(std_row['list_name']):
-                        country_discrepancies.append({
-                            'tab': 'choices',
-                            'row': idx + 2,
-                            'sector': std_row.get('theme', ''),
-                            'name': std_name,
-                            'list_name': std_list_name,
-                            'issue': 'Missing in country choices',
-                            'matched': 'not matched',
-                            'approximate_match': None,
-                            'best_match': None,
-                            'token_match': None,
-                            'label_match': None,
-                            'usability': 'not usable',
-                            'note': None
-                        })
-                    continue  # Move to next standard row
             else:
-                match_status = 'matched'
-                matched_row_number = country_row.index[0] + 2
-                matched_name_value = country_row.iloc[0].get('name', 'N/A')
-                matched_list_name_value = country_row.iloc[0].get('list_name', 'N/A')
-
-            # Regular comparison for matched rows (either by name/list_name or label)
-            for col in CHOICES_COLUMNS_TO_COMPARE:
+                match_status = 'not matched'
+                country_discrepancies.append({
+                    'tab': 'survey',
+                    'row': idx + 2,
+                    'sector': std_row.get('theme', ''),
+                    'name': std_name,
+                    'issue': 'Missing in country survey',
+                    'matched': 'not matched',
+                    'approximate_match': None,
+                    'best_match': None,
+                    'token_match': None,
+                    'label_match': None,
+                    'usability': 'not usable',
+                    'note': None
+                })
+        else:
+            for col in SURVEY_COLUMNS_TO_COMPARE:
                 if col not in std_row or col not in country_row.iloc[0]:
-                    continue  # Skip this column if it's not in both standard and country data
-                
+                    continue
+
                 std_value = std_row[col]
                 country_value = country_row.iloc[0][col]
-                
+
+                country_row_number = country_row.index[0] + 2
+                country_variable_name = country_row.iloc[0].get('name', 'N/A')
+
+                if verbose:
+                        logging.info(f"  {col}: {std_value} vs {country_value}")
+
                 if is_empty_or_nan(std_value) and is_empty_or_nan(country_value):
-                    column_match_status = 'matched'
+                    match_status = 'matched'
                     approx_match = None
                     best_match = None
                     token_match = None
+                    label_match = None
                 elif std_value != country_value:
-                    column_match_status = 'not matched'
-                    approx_match, score = find_approximate_match(std_value, country_choices[col].dropna().unique(), threshold)
+                    match_status = 'not matched'
+                    approx_match, score = find_approximate_match(std_value, country_survey[col].dropna().unique(), threshold)
                     if score >= threshold:
                         best_match = None
                         token_match = None
+                        label_match = None
                     else:
-                        best_match, best_score = find_best_match(std_value, country_choices[col].dropna().unique())
+                        best_match, best_score = find_best_match(std_value, country_survey[col].dropna().unique())
                         if best_score >= threshold:
                             token_match = None
+                            label_match = None
                         else:
-                            token_match, token_score = find_token_match(std_value, country_choices[col].dropna().unique())
+                            token_match, token_score = find_token_match(std_value, country_survey[col].dropna().unique())
                     approx_match = approx_match if score >= threshold else None
                 else:
-                    column_match_status = 'matched'
+                    match_status = 'matched'
                     approx_match = None
                     best_match = None
                     token_match = None
-                
+                    label_match = None
+
                 country_discrepancies.append({
-                    'tab': 'choices',
+                    'tab': 'survey',
                     'row': idx + 2,
+                    'sector': std_row.get('theme', ''),
                     'name': std_name,
-                    'list_name': std_list_name,
                     'column': col,
                     'standard_value': std_value,
                     'country_value': country_value,
-                    'matched': column_match_status,
+                    'matched': match_status,
                     'approximate_match': approx_match,
                     'best_match': best_match,
                     'token_match': token_match,
-                    'label_match': best_label_match if match_status == 'matchedByLabel' else None,
-                    'usability': 'usable' if column_match_status == 'matched' else 'not usable',
-                    'note': f'{match_status}. Country row: {matched_row_number}, Country name: {matched_name_value}, Country list_name: {matched_list_name_value}'
-                })
-
+                    'label_match': label_match,
+                    'usability': 'usable' if match_status == 'matched' else 'not usable',
+                    'note': f'Direct match. Country row: {country_row_number}, Country variable: {country_variable_name}' if match_status == 'matched' else f'Country row: {country_row_number}, Country variable: {country_variable_name}',
+                    })
         
-        if country_discrepancies:
-            discrepancies[country] = country_discrepancies
-            if verbose:
-                logging.info(f"Discrepancies found for country: {country}")
+        # Compare choices tab
+    for idx, std_row in standard_choices.iterrows():
+        std_name = std_row['name']
+        std_list_name = std_row.get('list_name', '')
+
+        country_row = country_choices[(country_choices['name'] == std_name) & 
+                                    (country_choices['list_name'] == std_list_name)]
+
+        if verbose:
+            logging.info(f"Processing country: {country} Choices variable {std_name}")
+
+        if country_row.empty:
+            std_labels = [std_row[label] for label in standard_choices_label_columns if label in std_row.index and not pd.isna(std_row[label])]
+            best_label_match = None
+            best_label_score = 0
+            matched_row_number = 'N/A'
+            matched_name_value = 'N/A'
+            matched_list_name_value = 'N/A'
+
+            for std_label in std_labels:
+                for country_idx, country_row in country_choices.iterrows():
+                    country_labels = [country_row[label] for label in country_choices_label_columns if not pd.isna(country_row[label])]
+                    for country_label in country_labels:
+                        label_match, label_score = find_label_match(std_label, [country_label], threshold)
+                        if label_score > best_label_score:
+                            best_label_match = label_match
+                            best_label_score = label_score
+                            matched_row_number = country_idx + 2
+                            matched_name_value = country_row.get('name', 'N/A')
+                            matched_list_name_value = country_row.get('list_name', 'N/A')
+                            matched_country_row = country_row
+
+            if best_label_score >= threshold:
+                match_status = 'matchedByLabel'
+                country_row = matched_country_row
+                
+                if verbose:
+                        logging.info(f"  {col}: {std_value} vs {country_value}")
+
+            else:
+                match_status = 'not matched'
+                if not is_empty_or_nan(std_row['name']) and not is_empty_or_nan(std_row['list_name']):
+                    country_discrepancies.append({
+                        'tab': 'choices',
+                        'row': idx + 2,
+                        'sector': std_row.get('theme', ''),
+                        'name': std_name,
+                        'list_name': std_list_name,
+                        'issue': 'Missing in country choices',
+                        'matched': 'not matched',
+                        'approximate_match': None,
+                        'best_match': None,
+                        'token_match': None,
+                        'label_match': None,
+                        'usability': 'not usable',
+                        'note': None
+                    })
+                continue
         else:
+            match_status = 'matched'
+            matched_row_number = country_row.index[0] + 2
+            matched_name_value = country_row.iloc[0].get('name', 'N/A')
+            matched_list_name_value = country_row.iloc[0].get('list_name', 'N/A')
+
+        for col in CHOICES_COLUMNS_TO_COMPARE:
+            if col not in std_row or col not in country_row.iloc[0]:
+                continue
+
+            std_value = std_row[col]
+            country_value = country_row.iloc[0][col]
+
             if verbose:
-                logging.info(f"No discrepancies found for country: {country}")
-    
+                        logging.info(f"  {col}: {std_value} vs {country_value}")
+
+
+            if is_empty_or_nan(std_value) and is_empty_or_nan(country_value):
+                column_match_status = 'matched'
+                approx_match = None
+                best_match = None
+                token_match = None
+            elif std_value != country_value:
+                column_match_status = 'not matched'
+                approx_match, score = find_approximate_match(std_value, country_choices[col].dropna().unique(), threshold)
+                if score >= threshold:
+                    best_match = None
+                    token_match = None
+                else:
+                    best_match, best_score = find_best_match(std_value, country_choices[col].dropna().unique())
+                    if best_score >= threshold:
+                        token_match = None
+                    else:
+                        token_match, token_score = find_token_match(std_value, country_choices[col].dropna().unique())
+                approx_match = approx_match if score >= threshold else None
+            else:
+                column_match_status = 'matched'
+                approx_match = None
+                best_match = None
+                token_match = None
+
+            country_discrepancies.append({
+                'tab': 'choices',
+                'row': idx + 2,
+                'name': std_name,
+                'list_name': std_list_name,
+                'column': col,
+                'standard_value': std_value,
+                'country_value': country_value,
+                'matched': column_match_status,
+                'approximate_match': approx_match,
+                'best_match': best_match,
+                'token_match': token_match,
+                'label_match': best_label_match if match_status == 'matchedByLabel' else None,
+                'usability': 'usable' if column_match_status == 'matched' else 'not usable',
+                'note': f'{match_status}. Country row: {matched_row_number}, Country name: {matched_name_value}, Country list_name: {matched_list_name_value}'
+            })
+
+    return country_discrepancies
+
+def compare_with_standard(country_data, standard_data, verbose: bool, threshold: int):
+    discrepancies = {}
+
+    if verbose:
+        logging.info("Comparing country surveys with standard template...")
+
+    with ProcessPoolExecutor() as executor:
+        futures = []
+        for country, data in country_data.items():
+            future = executor.submit(compare_country_with_standard, country, data, standard_data, verbose, threshold)
+            futures.append((country, future))
+
+            if verbose:
+                logging.info(f"Comparing country: {country}")
+
+        for country, future in futures:
+            country_discrepancies = future.result()
+            if country_discrepancies:
+                discrepancies[country] = country_discrepancies
+                if verbose:
+                    logging.info(f"Discrepancies found for country: {country}")
+            else:
+                if verbose:
+                    logging.info(f"No discrepancies found for country: {country}")
+
     if verbose:
         logging.info(f"Total countries with discrepancies: {len(discrepancies)}")
-    
+
     return discrepancies
 
 def generate_discrepancy_report(discrepancies, output_directory, verbose: bool, append: bool):
     os.makedirs(output_directory, exist_ok=True)
     master_report = []
-    
+
     if verbose:
         logging.info("Generating discrepancy reports...")
-    
-    for country, country_discrepancies in discrepancies.items():
+
+    def process_country(country, country_discrepancies):
         country_df = pd.DataFrame(country_discrepancies)
         country_df['country'] = country
-        
+
         country_report_path = os.path.join(output_directory, f"{country}_discrepancy_report.csv")
-        
+
+        if verbose:
+            logging.info(f"Processing country: {country}")
+
         if append and os.path.exists(country_report_path):
             existing_report = pd.read_csv(country_report_path)
-            
-            # Handle survey tab
+
             survey_new_report = pd.concat([
                 existing_report[existing_report['tab'] == 'survey'], 
                 country_df[country_df['tab'] == 'survey']
             ]).drop_duplicates(subset=['name', 'column', 'row', 'matched'], keep='first')
-            
-            # Handle choices tab
+
             choices_new_report = pd.concat([
                 existing_report[existing_report['tab'] == 'choices'], 
                 country_df[country_df['tab'] == 'choices']
             ]).drop_duplicates(subset=['row', 'column', 'matched', 'list_name'], keep='first')
-            
-            # Combine the two reports
+
             new_report = pd.concat([survey_new_report, choices_new_report])
-            
+
             new_report.to_csv(country_report_path, index=False)
             if verbose:
                 logging.info(f"Appended new discrepancies to {country_report_path}")
@@ -518,14 +552,22 @@ def generate_discrepancy_report(discrepancies, output_directory, verbose: bool, 
             country_df.to_csv(country_report_path, index=False)
             if verbose:
                 logging.info(f"Generated new report for {country}: {country_report_path}")
-        
-        master_report.append(country_df)
-    
-    # Combine into master report
+
+        return country_df
+
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for country, country_discrepancies in discrepancies.items():
+            future = executor.submit(process_country, country, country_discrepancies)
+            futures.append(future)
+
+        for future in futures:
+            master_report.append(future.result())
+
     master_df = pd.concat(master_report, ignore_index=True)
     master_report_path = os.path.join(output_directory, "master_discrepancy_report.csv")
     master_df.to_csv(master_report_path, index=False)
-    
+
     if verbose:
         logging.info(f"Generated master report: {master_report_path}")
         logging.info("Reports generated successfully.")
@@ -540,19 +582,16 @@ def main():
     parser.add_argument("--append", action="store_true", help="Append to existing reports instead of overwriting.")
 
     args = parser.parse_args()
-    
-    # 1. Input the corresponding Kobo template Ingestion
+
     country_data = load_kobo_files(args.kobo_directory, args.verbose)
     standard_data = load_standard_template(args.standard_template_path, args.verbose)
-    
+
     if standard_data is None:
         logging.error("Failed to load the standard template. Exiting...")
         return
-    
-    # 2. Parsing and Initial Mapping
+
     discrepancies = compare_with_standard(country_data, standard_data, args.verbose, args.threshold)
-    
-    # 3. Generate Initial Reports
+
     generate_discrepancy_report(discrepancies, args.output_directory, args.verbose, args.append)
 
 if __name__ == "__main__":
